@@ -84,6 +84,8 @@ func (a *Agent) Run(ctx context.Context) (string, error) {
 			"iteration":     iter,
 			"finish_reason": choice.FinishReason,
 			"tool_calls":    len(choice.Message.ToolCalls),
+			"prompt_tokens": resp.Usage.PromptTokens,
+			"output_tokens": resp.Usage.CompletionTokens,
 			"total_tokens":  resp.Usage.TotalTokens,
 		}).Debug("LLM response received")
 

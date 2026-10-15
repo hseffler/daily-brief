@@ -1,0 +1,240 @@
+// Command daily-brief generates a personalized daily brief with an agentic
+// LLM loop (Mistral API) and delivers it via Telegram.
+//
+// Sources (all configured in the YAML config, never hard-coded):
+//   - web pages (e.g. zeit.de, spiegel.de) via the fetch_webpage tool
+//   - a Posteo mailbox (new mails) via the get_new_emails tool (IMAP)
+//   - an in-house SMA PV system (battery state, current production) via the
+//     get_pv_status tool (SMA Speedwire, via the sunny library — evcc's approach)
+//
+// The binary runs once per invocation and is meant to be scheduled daily
+// (systemd timer, see daily-brief.timer).
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/sirupsen/logrus"
+)
+
+func main() {
+	configFile := flag.String("config", "daily-brief.yaml", "Path to YAML config file")
+	verbose := flag.Bool("verbose", false, "Enable verbose debug logging")
+	flag.Parse()
+
+	logger := logrus.New()
+	logger.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp:   true,
+		TimestampFormat: "2006-01-02 15:04:05",
+		DisableColors:   true,
+	})
+	logger.SetLevel(logrus.InfoLevel)
+	logger.SetOutput(os.Stdout)
+	if *verbose {
+		logger.SetLevel(logrus.DebugLevel)
+		logger.Info("🐛 Verbose debug logging enabled")
+	}
+
+	cfg, err := readConfig(*configFile)
+	if err != nil {
+		logger.Fatalf("Failed to load config: %v", err)
+	}
+
+	logger.WithFields(logrus.Fields{
+		"model":       cfg.Mistral.Model,
+		"language":    cfg.Brief.Language,
+		"web_sources": len(cfg.Sources.Web),
+		"email":       cfg.Sources.Email.Enabled,
+		"sma":         cfg.Sources.SMA.Enabled,
+		"weather":     cfg.Sources.Weather.Enabled,
+		"max_iter":    cfg.Mistral.MaxIterations,
+	}).Info("🚀 Starting daily brief generation")
+
+	// Cancel in-flight work on SIGINT/SIGTERM so a hung tool or LLM call
+	// winds down instead of being SIGKILLed.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Bound the whole run (gather + write + deliver) so a stuck LLM/tool/
+	// network call cannot block the systemd timer indefinitely. The systemd
+	// unit additionally has TimeoutStartSec.
+	runCtx, cancel := context.WithTimeout(ctx, overallRunTimeout)
+	defer cancel()
+
+	brief, err := generateBrief(runCtx, cfg, logger)
+	if err != nil {
+		logger.Fatalf("Failed to generate brief: %v", err)
+	}
+
+	fmt.Printf("\n========== Daily Brief %s ==========\n\n%s\n\n", time.Now().Format("2006-01-02"), brief)
+
+	sender := NewTelegramSender(cfg.Telegram.Token, cfg.Telegram.ChatID, nil, logger)
+	if err := sender.Send(runCtx, brief); err != nil {
+		logger.Fatalf("Failed to deliver brief via Telegram: %v", err)
+	}
+}
+
+// overallRunTimeout bounds one whole run (gather + write + deliver).
+const overallRunTimeout = 15 * time.Minute
+
+// generateBrief wires the tools and the agent and returns the final brief.
+func generateBrief(ctx context.Context, cfg *Config, logger *logrus.Logger) (string, error) {
+	mistral := NewMistralClient(cfg.Mistral.APIKey, cfg.Mistral.BaseURL, nil)
+
+	tools := []Tool{
+		newWebFetchTool(cfg.WebFetch.MaxChars, cfg.WebFetch.TimeoutSeconds, logger),
+	}
+
+	if cfg.Sources.Email.Enabled {
+		fetcher := &imapFetcher{
+			host:     cfg.Sources.Email.Host,
+			port:     cfg.Sources.Email.Port,
+			username: cfg.Sources.Email.Username,
+			password: cfg.Sources.Email.Password,
+			mailbox:  cfg.Sources.Email.Mailbox,
+			logger:   logger,
+		}
+		tools = append(tools, newEmailTool(cfg, fetcher, logger))
+	}
+
+	if cfg.Sources.SMA.Enabled {
+		smaClient, err := NewSMASpeedwireClient(
+			cfg.Sources.SMA.Host,
+			cfg.Sources.SMA.Password,
+			cfg.Sources.SMA.Serial,
+			cfg.Sources.SMA.Interface,
+			cfg.Sources.SMA.TimeoutSeconds,
+			logger,
+		)
+		if err != nil {
+			return "", err
+		}
+		if cfg.Sources.SMA.Host == "" && cfg.Sources.SMA.Serial == 0 {
+			logger.Warn("sources.sma: no host/serial configured — the first SMA device found on the LAN will be used")
+		}
+		tools = append(tools, newSMATool(smaClient, logger))
+	}
+
+	if cfg.Sources.Weather.Enabled {
+		weatherClient := newWeatherClient(
+			cfg.Sources.Weather.Latitude,
+			cfg.Sources.Weather.Longitude,
+			cfg.Sources.Weather.Timezone,
+			cfg.Sources.Weather.Days,
+			cfg.Sources.Weather.TimeoutSeconds,
+			cfg.Sources.Weather.URL,
+			logger,
+		)
+		tools = append(tools, newWeatherTool(weatherClient, logger))
+	}
+
+	now := time.Now()
+	systemPrompt := buildSystemPrompt(cfg, now)
+	userPrompt := buildUserPrompt(cfg, now)
+
+	agent := NewAgent(mistral, cfg.Mistral.Model, cfg.Mistral.Temperature,
+		tools, systemPrompt, userPrompt, cfg.Mistral.MaxIterations, logger)
+
+	brief, err := agent.Run(ctx)
+	return brief, err
+}
+
+// defaultSystemPrompt and defaultUserPrompt are the fallback prompt templates,
+// used when the config does not set prompts.system / prompts.user. The
+// example config carries the same text so it can be edited there.
+const defaultSystemPrompt = `You are the user's personal assistant. Your job is to write a concise, visually appealing daily brief.
+Today's date: {date}.
+
+{sources}
+
+Rules:
+- Write the brief in {language}.
+- Use emojis and visual formatting to make the brief scannable and pleasant to read. The message is sent to Telegram with HTML formatting: make each section header bold with <b>...</b> (e.g. 📰 <b>Top news</b>) and keep the emojis. Use no other markup — no Markdown (**bold**, *italic*, backticks), it would be shown literally. Outside <b> tags, never write the characters <, > or & (write "and" instead of "&").
+- Structure the brief with exactly these sections, in this order, each with an emoji-prefixed header and a blank line before it:
+  1. 📰 "Top news": 3-5 bullet points (use ▪ or • as the bullet), one line each, with the most important headlines from the web sources. Multiple sources often cover the same story — report each event only once, merging details from different sources into a single bullet. Never list the same news item twice.
+  2. 📧 "Emails": only noteworthy mails (skip newsletters, spam and automated notifications), one line each: sender — subject.
+  3. ☀️ "PV system": current PV production, battery state of charge, and a one-line assessment (e.g. battery charging from solar, surplus feeding into the grid). Use ⚡ for production, 🔋 for battery.
+  4. 🌤️ "Weather": a compact 7-day forecast, one line per day. Start each line with a weather emoji, then the short day name and date, temperature range, and precipitation. Use · as a separator. Examples:
+     ☀️ Mon 09 ·  8–17°C · 0.0mm
+     🌧️ Tue 10 ·  9–15°C · 2.3mm (80%)
+     ⛅ Wed 11 · 10–16°C · 0.5mm (20%)
+     Weather emojis: ☀️ clear, 🌤️ mostly sunny, ⛅ partly cloudy, ☁️ overcast, 🌧️ rain, 🌦️ showers, ❄️ snow, ⛈️ thunderstorm, 🌫️ fog. Only show the precipitation probability when it is above 0%.
+  5. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
+- Separate sections with a blank line. You may use a thin separator line (e.g. ───) between major sections if it improves readability.
+- Keep the whole brief under 300 words. Be concise and factual.
+- Only report information the tools actually returned. Never invent news, emails or measurements.
+- When you have gathered enough information, reply with the final brief as your message and make no further tool calls.`
+
+const defaultUserPrompt = `Generate today's daily brief (date: {date}). Use your tools to gather the information first, then write the final brief as your reply.`
+
+// buildSystemPrompt renders the system prompt: the template from the config
+// (or the default) with the dynamic placeholders filled in.
+func buildSystemPrompt(cfg *Config, now time.Time) string {
+	tpl := cfg.Prompts.System
+	if strings.TrimSpace(tpl) == "" {
+		tpl = defaultSystemPrompt
+	}
+	return renderPrompt(tpl, cfg, now)
+}
+
+// buildUserPrompt renders the user prompt the same way.
+func buildUserPrompt(cfg *Config, now time.Time) string {
+	tpl := cfg.Prompts.User
+	if strings.TrimSpace(tpl) == "" {
+		tpl = defaultUserPrompt
+	}
+	return renderPrompt(tpl, cfg, now)
+}
+
+// renderPrompt replaces the dynamic placeholders in a prompt template:
+//
+//	{date}     - today's date (YYYY-MM-DD)
+//	{language} - the brief language (English/German)
+//	{sources}  - the generated list of enabled sources and their tools
+func renderPrompt(tpl string, cfg *Config, now time.Time) string {
+	return strings.NewReplacer(
+		"{date}", now.Format("2006-01-02"),
+		"{language}", languageName(cfg.Brief.Language),
+		"{sources}", buildSourcesDescription(cfg),
+	).Replace(tpl)
+}
+
+// buildSourcesDescription lists the enabled sources and the tools to use for
+// them. It is generated from the config so it cannot drift from the enabled
+// sources.
+func buildSourcesDescription(cfg *Config) string {
+	var sb strings.Builder
+	sb.WriteString("Available sources (use the tools to gather data before writing):")
+	for _, w := range cfg.Sources.Web {
+		fmt.Fprintf(&sb, "\n- Web page %q: %s — fetch it with the fetch_webpage tool and extract the most important headlines.", w.Name, w.URL)
+	}
+	if cfg.Sources.Email.Enabled {
+		sb.WriteString("\n- Email: the user's Posteo mailbox — call get_new_emails to see the mails that arrived within the configured time window (sources.email.since_hours).")
+	}
+	if cfg.Sources.SMA.Enabled {
+		sb.WriteString("\n- SMA PV system: call get_pv_status to read the battery state of charge and the current production.")
+	}
+	if cfg.Sources.Weather.Enabled {
+		fmt.Fprintf(&sb, "\n- Weather: call get_weather_forecast for the %d-day forecast at the user's location.", cfg.Sources.Weather.Days)
+	}
+	return sb.String()
+}
+
+// languageName maps the config language code to the name used in the prompt.
+func languageName(code string) string {
+	switch code {
+	case "de":
+		return "German"
+	case "en":
+		return "English"
+	default:
+		return code
+	}
+}

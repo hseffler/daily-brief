@@ -1,0 +1,20 @@
+[Unit]
+Description=Daily Brief Generator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=daily-brief
+Group=daily-brief
+WorkingDirectory=/opt/daily-brief
+ExecStart=/opt/daily-brief/daily-brief -config /opt/daily-brief/daily-brief.yaml
+# Bound the run so a stuck LLM/tool/network call cannot block the timer.
+TimeoutStartSec=10min
+
+# Logging to journald
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

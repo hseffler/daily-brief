@@ -28,7 +28,7 @@ systemd timer. Project layout follows hostmonitor conventions.
 ├── README.md              # User documentation
 ├── AGENTS.md              # This file (project summary for contributors)
 ├── daily-brief.service    # systemd unit (Type=oneshot)
-├── daily-brief.timer      # systemd timer (daily 07:00, Persistent=true)
+├── daily-brief.timer      # systemd timer (daily 05:00, Persistent=true)
 ├── daily-brief.yaml.example  # Example configuration
 ├── go.mod                 # Go module definition (github.com/hseffler/daily-brief)
 └── go.sum                 # Go dependencies
@@ -69,7 +69,7 @@ systemd timer. Project layout follows hostmonitor conventions.
   first `text/plain` MIME part with quoted-printable/base64 decoding
   (stdlib `net/mail` + `mime/multipart`). New-mail detection is
   **stateless**: IMAP `SEARCH SINCE now - email.since_hours` (default 24h,
-  a rolling window matching the daily 07:00 schedule) — no state file, no
+  a rolling window matching the daily 05:00 schedule) — no state file, no
   dedupe; a delayed or repeated run may re-report mails from the window.
   Posteo requires an **app password**. The fetch limit is `max(4 x
   max_messages, 100)` and the brief cap (`max_messages`) keeps the newest
@@ -138,7 +138,7 @@ systemd timer. Project layout follows hostmonitor conventions.
   call cannot block the timer indefinitely.
 - systemd: `daily-brief.service` (`Type=oneshot`, dedicated `daily-brief`
   user, config at `/opt/daily-brief/daily-brief.yaml`) + `daily-brief.timer`
-  (daily 07:00, `Persistent=true`). `make install` builds, creates the user
+  (daily 05:00, `Persistent=true`). `make install` builds, creates the user
   (idempotent), installs units + example config, enables the timer.
 
 ## Go Dependencies
@@ -195,7 +195,7 @@ When making changes to the codebase:
   `/opt/daily-brief` to it, and enables + starts the timer; `make uninstall`
   guards its `rm -rf` to `/opt/daily-brief` only.
 - **Scheduling time**: change `OnCalendar` in `daily-brief.timer` (currently
-  `*-*-* 07:00:00`).
+  `*-*-* 05:00:00`).
 
 ## Known Limitations
 

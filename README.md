@@ -57,7 +57,7 @@ $EDITOR daily-brief.yaml
 # 3. Run once
 ./build/daily-brief -config daily-brief.yaml
 
-# 4. Run daily at 07:00 via systemd (requires root)
+# 4. Run daily at 05:00 via systemd (requires root)
 sudo make install
 ```
 
@@ -180,7 +180,7 @@ it a natural fit for a systemd timer:
 
 - `daily-brief.service` — `Type=oneshot`, runs as the dedicated `daily-brief`
   user, config at `/opt/daily-brief/daily-brief.yaml`.
-- `daily-brief.timer` — runs the service daily at 07:00 (`Persistent=true` to
+- `daily-brief.timer` — runs the service daily at 05:00 (`Persistent=true` to
   catch up after downtime). Change `OnCalendar` to adjust the time.
 
 ```bash

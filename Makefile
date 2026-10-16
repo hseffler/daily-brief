@@ -67,7 +67,7 @@ install: build
 	systemctl daemon-reload
 	systemctl enable $(BINARY_NAME).timer
 	systemctl start $(BINARY_NAME).timer
-	@echo "Installation complete. Timer started (daily 07:00)."
+	@echo "Installation complete. Timer started (daily 05:00)."
 	@echo "Edit $(CONFIG_DIR)/daily-brief.yaml with your API keys before the first run!"
 
 # Uninstall the service. Requires root. The rm -rf is guarded: CONFIG_DIR must

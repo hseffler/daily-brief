@@ -36,11 +36,19 @@ config with an `.example` file, logrus logging, a Makefile with
      free **Open-Meteo** API (no API key required, uses DWD ICON models for
      Central Europe): per-day condition, min/max temperature, precipitation
      amount and probability, and sunshine duration.
+   - **`get_tv_news_schedule`** — fetches the coming day's program of ARD
+     (Das Erste) and ZDF from their public program APIs (no account needed)
+     and checks whether the late news editions **heute-journal** (ZDF) and
+     **tagesthemen** (ARD) start early, within a configured window (default
+     21:15–21:30).
 2. The model writes the final brief (English by default, configurable) with
    emoji-rich formatting: 📰 *Top news* (sorted into 🏛️ Politics, 💶 Economy,
    ⚽ Sports, 🎭 Culture categories, deduplicated across sources),
    📧 *Emails*, ☀️ *PV system*, 🚗 *Car*, 🌤️ *Weather* (7-day table in
-   `<pre>`), and a 🔮 one-line outlook. Multiple news sources covering the same story
+   `<pre>`), 📺 *TV news* (copy-pasteable `<pre>` block: start time, channel
+   and show per late-news edition, ⏰ on the edition inside the configured
+   window; the heute re-watch tip when nothing is in the slot), and a 🔮
+   one-line outlook. Multiple news sources covering the same story
    are merged into a single bullet — no duplicate headlines.
 3. The brief is printed to stdout and sent to your Telegram chat (chunked to
    fit the 4096-character message limit). Messages are sent with Telegram's
@@ -83,6 +91,7 @@ comments. The important ones:
 | `sources.sma` | inverter host (empty = discover), password (default `0000`), serial, interface, timeout |
 | `sources.weather` | Open-Meteo: `latitude`, `longitude`, `timezone`, `days` (default 7) |
 | `sources.ev` | VW group EV via the EU Data Act portal: `brand` (default `Volkswagen`), `user`, `password`, optional `vin`, timeout |
+| `sources.tv` | TV news: `window_start`/`window_end` (default `21:15`/`21:30`), `timezone` (default `Europe/Berlin`), timeout |
 | `telegram.token` / `telegram.chat_id` | Bot token from @BotFather; chat id via `getUpdates` |
 
 ### Posteo (email source)
@@ -177,6 +186,43 @@ min/max temperature, precipitation amount and probability, and sunshine
 duration in hours. The brief renders this as a compact 7-day table inside
 a `<pre>` monospace block, one line per day, with a weather emoji
 (☀️ 🌤️ ⛅ ☁️ 🌧️ 🌦️ ❄️ ⛈️ 🌫️).
+
+### TV news (heute-journal / tagesthemen)
+
+`get_tv_news_schedule` fetches the coming day's program of **Das Erste**
+(ARD) and **ZDF** and checks whether the late news editions start early —
+within the configured window (default **21:15–21:30**). The sources are the
+broadcaster's own public program APIs, free and without an account:
+
+- ARD: `https://programm-api.ard.de/program/api/program?day=…`
+- ZDF: `https://api.zdf.de/cmdm/epg/broadcasts?tvServices=zdf&from=…&to=…`
+  (authenticated with the public token ZDF's own web player ships;
+  `sources.tv.zdf_api_key` overrides it)
+
+```yaml
+sources:
+  tv:
+    enabled: true
+    window_start: "21:15"   # report editions starting from here ...
+    window_end: "21:30"     # ... to here (both inclusive)
+    timezone: "Europe/Berlin"
+```
+
+The tool checks the current day (the day the brief runs). The brief renders
+the editions as a compact monospace block inside `<pre>` tags — ready to
+copy and paste, like the weather table — one line per edition (start time,
+channel, show), with a trailing ⏰ marking the edition that starts inside
+the window:
+
+```
+21:30 · ZDF · heute journal ⏰
+23:30 · ARD · tagesthemen
+```
+
+If nothing starts inside the window, a line after the block suggests
+re-watching **heute** (19:00) in the ZDF Mediathek. Overnight repeats of the
+previous evening (e.g. the ~00:20 heute journal repeat) are ignored — the
+tool checks the day's own program from 06:00 on.
 
 ### RSS feeds as news sources
 

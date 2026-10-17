@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v2"
 )
@@ -75,6 +76,16 @@ type Config struct {
 			PortalURL      string `yaml:"portal_url"`   // only override for proxies/tests
 			IdentityURL    string `yaml:"identity_url"` // only override for proxies/tests
 		} `yaml:"ev"`
+		TV struct {
+			Enabled        bool   `yaml:"enabled"`
+			WindowStart    string `yaml:"window_start"` // "HH:MM", inclusive
+			WindowEnd      string `yaml:"window_end"`   // "HH:MM", inclusive
+			Timezone       string `yaml:"timezone"`
+			TimeoutSeconds int    `yaml:"timeout_seconds"`
+			ARDURL         string `yaml:"ard_url"`     // only override for proxies/tests
+			ZDFURL         string `yaml:"zdf_url"`     // only override for proxies/tests
+			ZDFAPIKey      string `yaml:"zdf_api_key"` // only override; default is ZDF's public web-player token
+		} `yaml:"tv"`
 	} `yaml:"sources"`
 
 	Telegram struct {
@@ -144,6 +155,18 @@ func (c *Config) setDefaults() {
 	if c.Sources.EV.TimeoutSeconds == 0 {
 		c.Sources.EV.TimeoutSeconds = 30
 	}
+	if c.Sources.TV.WindowStart == "" {
+		c.Sources.TV.WindowStart = formatClock(defaultTVWindowStart)
+	}
+	if c.Sources.TV.WindowEnd == "" {
+		c.Sources.TV.WindowEnd = formatClock(defaultTVWindowEnd)
+	}
+	if c.Sources.TV.Timezone == "" {
+		c.Sources.TV.Timezone = defaultTVTimezone
+	}
+	if c.Sources.TV.TimeoutSeconds == 0 {
+		c.Sources.TV.TimeoutSeconds = 15
+	}
 	if c.WebFetch.MaxChars == 0 {
 		c.WebFetch.MaxChars = 8000
 	}
@@ -160,8 +183,8 @@ func (c *Config) validate() error {
 	if c.Telegram.Token == "" || c.Telegram.ChatID == "" {
 		return fmt.Errorf("telegram.token and telegram.chat_id are required (the brief is delivered via Telegram)")
 	}
-	if len(c.Sources.Web) == 0 && !c.Sources.Email.Enabled && !c.Sources.SMA.Enabled && !c.Sources.Weather.Enabled && !c.Sources.EV.Enabled {
-		return fmt.Errorf("no sources enabled: configure at least one of sources.web, sources.email, sources.sma, sources.weather or sources.ev")
+	if len(c.Sources.Web) == 0 && !c.Sources.Email.Enabled && !c.Sources.SMA.Enabled && !c.Sources.Weather.Enabled && !c.Sources.EV.Enabled && !c.Sources.TV.Enabled {
+		return fmt.Errorf("no sources enabled: configure at least one of sources.web, sources.email, sources.sma, sources.weather, sources.ev or sources.tv")
 	}
 	for i, w := range c.Sources.Web {
 		if w.Name == "" || w.URL == "" {
@@ -191,6 +214,23 @@ func (c *Config) validate() error {
 		if c.Sources.Weather.Latitude < -90 || c.Sources.Weather.Latitude > 90 ||
 			c.Sources.Weather.Longitude < -180 || c.Sources.Weather.Longitude > 180 {
 			return fmt.Errorf("sources.weather: latitude/longitude out of range")
+		}
+	}
+	if c.Sources.TV.Enabled {
+		ws, err := parseHHMM(c.Sources.TV.WindowStart)
+		if err != nil {
+			return fmt.Errorf("sources.tv: window_start: %v", err)
+		}
+		we, err := parseHHMM(c.Sources.TV.WindowEnd)
+		if err != nil {
+			return fmt.Errorf("sources.tv: window_end: %v", err)
+		}
+		if ws > we {
+			return fmt.Errorf("sources.tv: window_start (%s) must not be after window_end (%s)",
+				c.Sources.TV.WindowStart, c.Sources.TV.WindowEnd)
+		}
+		if _, err := time.LoadLocation(c.Sources.TV.Timezone); err != nil {
+			return fmt.Errorf("sources.tv: unknown timezone %q", c.Sources.TV.Timezone)
 		}
 	}
 	switch c.Brief.Language {

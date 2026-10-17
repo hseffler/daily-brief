@@ -15,6 +15,7 @@ func testPromptConfig() *Config {
 	cfg.Sources.Weather.Enabled = true
 	cfg.Sources.Weather.Days = 7
 	cfg.Sources.EV.Enabled = true
+	cfg.Sources.TV.Enabled = true
 	return cfg
 }
 
@@ -30,8 +31,14 @@ func TestDefaultSystemPromptRenders(t *testing.T) {
 		"- SMA PV system: call get_pv_status",
 		"- Weather: call get_weather_forecast for the 7-day forecast",
 		"- Electric vehicle (VW group, via the EU Data Act portal): call get_ev_status",
+		"- TV news (ARD Das Erste + ZDF): call get_tv_news_schedule",
 		`"Car": the user's electric vehicle — battery state of charge, estimated range and charging status`,
 		`"Weather": a compact 7-day forecast in a monospace table inside <pre>...</pre> tags`,
+		`"TV news": the coming day's late news editions from the get_tv_news_schedule tool`,
+		"ready to copy and paste, like the weather table",
+		"Mark an edition that starts within the configured window with a trailing ⏰",
+		"21:30 · ZDF · heute journal ⏰",
+		"suggesting to re-watch heute (19:00) in the ZDF Mediathek",
 	} {
 		if !strings.Contains(sp, want) {
 			t.Errorf("system prompt missing %q:\n%s", want, sp)
@@ -87,10 +94,18 @@ func TestSourcesDescriptionReflectsEnabledSources(t *testing.T) {
 	if !strings.Contains(desc, "get_ev_status") {
 		t.Errorf("enabled EV source missing:\n%s", desc)
 	}
+	if !strings.Contains(desc, "get_tv_news_schedule") {
+		t.Errorf("enabled TV source missing:\n%s", desc)
+	}
 
 	cfg.Sources.EV.Enabled = false
 	if desc := buildSourcesDescription(cfg); strings.Contains(desc, "get_ev_status") {
 		t.Errorf("disabled EV should not be listed:\n%s", desc)
+	}
+
+	cfg.Sources.TV.Enabled = false
+	if desc := buildSourcesDescription(cfg); strings.Contains(desc, "get_tv_news_schedule") {
+		t.Errorf("disabled TV should not be listed:\n%s", desc)
 	}
 }
 

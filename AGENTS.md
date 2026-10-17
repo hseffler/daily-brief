@@ -24,6 +24,8 @@ systemd timer. Project layout follows hostmonitor conventions.
 │   ├── tool_sma.go        # get_pv_status tool
 │   ├── vw.go              # VW EU Data Act portal client (evcc's eudataact approach, ported)
 │   ├── tool_ev.go         # get_ev_status tool
+│   ├── tv.go              # ARD/ZDF program API client (heute-journal/tagesthemen check)
+│   ├── tool_tv.go         # get_tv_news_schedule tool
 │   ├── telegram.go        # Telegram delivery (chunked, 429 backoff)
 │   └── *_test.go          # Unit/integration tests (httptest + fakes)
 ├── Makefile               # Build automation (overridable GOOS/GOARCH, root guards)
@@ -101,6 +103,26 @@ systemd timer. Project layout follows hostmonitor conventions.
   `GridEnergyImportKWh`/`GridEnergyExportKWh` (energy meters: raw Ws ÷
   3600000). Grid power is only reported when the device actually measures it
   (`HasGridPower`): plain inverters without an Energy Meter get an n/a line.
+- **TV** (`get_tv_news_schedule`): **ARD (Das Erste) and ZDF** evening news via
+  the broadcasters' public program APIs (no account): ARD
+  `https://programm-api.ard.de/program/api/program?day=YYYY-MM-DD` (channel
+  `daserste`, serves at most 8 days ahead) and ZDF
+  `https://api.zdf.de/cmdm/epg/broadcasts?tvServices=zdf&from=…&to=…&page=N`
+  (paginated, limit 100; authenticated with the public bearer token ZDF's own
+  web player ships — overridable via `sources.tv.zdf_api_key`). The tool checks
+  the coming day (the current day in `sources.tv.timezone`, default
+  Europe/Berlin): it collects the **heute journal** (ZDF) and **tagesthemen**
+  (ARD) editions and reports which start within the configured window
+  (`sources.tv.window_start`/`window_end`, default 21:15–21:30, inclusive).
+  Editions starting before 06:00 are ignored — the small hours carry overnight
+  repeats of the previous evening (e.g. the ~00:20 heute journal repeat),
+  which belong to the previous program day. A failing source does not lose the
+  other; the output carries per-source error lines, and the tool only fails
+  when both sources fail. The brief section renders the editions as a compact
+  monospace `<pre>` block (ready to copy and paste, like the weather table),
+  one line per edition: start time · channel · show, with a trailing ⏰ on
+  the edition inside the window; when nothing is in the slot, a line after
+  the block suggests re-watching **heute (19:00)** in the ZDF Mediathek.
 - **EV** (`get_ev_status`): **VW group vehicles (ID.3, e-Golf, e-Up, Audi,
   Skoda, Seat, Cupra)** via the **EU Data Act portal**
   (`https://eu-data-act.drivesomethinggreater.com`) — the same source as
@@ -157,8 +179,11 @@ systemd timer. Project layout follows hostmonitor conventions.
   deduplicated across sources — same story reported once), 📧 Emails,
   ☀️ PV system (⚡/🔋), 🚗 Car (🔋, with a note when the data is hours old),
   🌤️ Weather (7-day monospace table inside `<pre>` tags, one line per day
-  with weather emoji, temperature, precipitation and sunshine hours), 🔮
-  outlook.
+  with weather emoji, temperature, precipitation and sunshine hours), 📺 TV
+  news (copy-pasteable monospace `<pre>` block, one line per late-news
+  edition: start time · channel · show, trailing ⏰ on the edition inside the
+  configured window; a heute 19:00 re-watch tip line after the block when
+  nothing is in the slot), 🔮 outlook.
 - **Mistral Content type**: newer Mistral models return `content` as an array
   of content parts (`[{"type":"text","text":"..."}]`) instead of a plain
   string. The `Content` type in `mistral.go` is a string-based type with
@@ -194,12 +219,17 @@ systemd timer. Project layout follows hostmonitor conventions.
   - `EmailFetcher` interface → fake fetcher for tool/state/dedupe tests.
   - `httptest.Server` for Mistral request shape, SMA Webconnect flow (login,
     getValues parsing, 401 re-login, error mapping), Telegram chunking/429,
-    web-page extraction (HTML articles + RSS feeds), and weather API parsing.
+    web-page extraction (HTML articles + RSS feeds), weather API parsing, and
+    the ARD/ZDF program APIs (response shapes, nested timeSlots, pagination,
+    request headers, window/scope filtering, per-source failure handling).
   - `httptest` TLS servers fake the VW identity service and the EU Data Act
     portal (login redirect chain, session cookie, 401 re-login,
     marketing-consent skip, dataset zips, both vehicle-list response shapes).
     `go test -tags live -run TestLiveVWReadout ./cmd` does a manual readout
     against the real portal (reads `sources.ev` from the config).
+    `go test -tags live -run TestLiveTVReadout ./cmd` does a manual readout
+    against the real ARD/ZDF program APIs (prints the raw evening entries and
+    the formatted `get_tv_news_schedule` output; needs no credentials).
 - `Content` type is tested for both wire formats (string and array of parts),
   including a regression test for array content in Mistral responses.
 - `emailSnippet` is tested against raw MIME fixtures (plain, multipart
@@ -263,6 +293,13 @@ When making changes to the codebase:
    charging); a parked car's SoC/range may be hours old. The one-time browser
    setup (consent + link vehicle + enable the continuous data request) is
    mandatory. VW group brands only (VW, Audi, Skoda, Seat, Cupra).
+7. **TV schedule scope**: `get_tv_news_schedule` checks the current day's own
+   program (from 06:00 local in `sources.tv.timezone`); overnight repeats of
+   the previous evening are ignored. The ZDF API is authenticated with the
+   public token from ZDF's own web player (`sources.tv.zdf_api_key` overrides
+   it if it ever rotates); the ARD program API serves at most 8 days ahead.
+   Neither API is documented officially — both are the same endpoints the
+   broadcasters' own web frontends use.
 7. **Email is stateless**: mails are matched by a rolling `since_hours`
    window, not by dedupe state. A delayed run (systemd catch-up after
    downtime) or a manual second run repeats mails from the window, and
@@ -278,7 +315,7 @@ When making changes to the codebase:
 ## Project Status
 
 **Current**: Feature-complete for the requested sources, tests green
-**Version**: 1.0.0
+**Version**: 1.1.0
 
 ---
 

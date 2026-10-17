@@ -42,7 +42,10 @@ prompts:
          🌧️ Tue 10 ·  9–15°C · 2.3mm (80%)
          ⛅ Wed 11 · 10–16°C · 0.5mm (20%) · 3.1h sun</pre>
          Weather emojis: ☀️ clear, 🌤️ mostly sunny, ⛅ partly cloudy, ☁️ overcast, 🌧️ rain, 🌦️ showers, ❄️ snow, ⛈️ thunderstorm, 🌫️ fog. Only show the precipitation probability when it is above 0%. Only show sunshine hours when above 0.
-      6. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
+      6. 📺 "TV news": the coming day's late news editions from the get_tv_news_schedule tool, as a compact monospace block inside <pre>...</pre> tags — ready to copy and paste, like the weather table. One line per edition. Use · as a separator between columns: start time (HH:MM), channel (ZDF / ARD), show name (heute journal / tagesthemen). Mark an edition that starts within the configured window with a trailing ⏰. Omit editions the tool reports as not scheduled that day. If no edition starts within the window, write one line after the block suggesting to re-watch heute (19:00) in the ZDF Mediathek. Example:
+         <pre>21:30 · ZDF · heute journal ⏰
+         23:30 · ARD · tagesthemen</pre>
+      7. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
     - Separate sections with a blank line. You may use a thin separator line (e.g. ───) between major sections if it improves readability.
     - Keep the whole brief under 300 words. Be concise and factual.
     - Only report information the tools actually returned. Never invent news, emails or measurements.
@@ -124,6 +127,22 @@ sources:
     timeout_seconds: 30
     # portal_url: "https://eu-data-act.drivesomethinggreater.com"  # only override for proxies/tests
     # identity_url: "https://identity.vwgroup.io"                  # only override for proxies/tests
+
+  # TV news: check the coming day's program of ARD (Das Erste) and ZDF — do
+  # the late news editions heute-journal (ZDF) and tagesthemen (Das Erste)
+  # start early, within the configured window? If an edition starts inside
+  # the window, the brief lists it; otherwise it suggests re-watching heute
+  # (19:00) in the ZDF Mediathek. Uses the public program APIs of ARD
+  # (programm-api.ard.de) and ZDF (api.zdf.de) — free, no account needed.
+  tv:
+    enabled: true
+    window_start: "21:15"                # report editions starting from here ...
+    window_end: "21:30"                  # ... to here (both inclusive)
+    timezone: "Europe/Berlin"            # the channels' program day
+    timeout_seconds: 15
+    # ard_url: "https://programm-api.ard.de"  # only override for proxies/tests
+    # zdf_url: "https://api.zdf.de"           # only override for proxies/tests
+    # zdf_api_key: "..."                      # only override; the default is the public token from ZDF's web player
 
 # Delivery: the brief is sent to this Telegram chat (and printed to stdout).
 # Create a bot via @BotFather; get the chat id from

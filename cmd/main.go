@@ -9,6 +9,9 @@
 //   - a VW group electric vehicle (battery state of charge, range, charging
 //     status) via the get_ev_status tool (VW EU Data Act portal — evcc's
 //     "drivesomethinggreater" approach)
+//   - the evening TV program of ARD (Das Erste) and ZDF via the
+//     get_tv_news_schedule tool (public program APIs — do heute-journal and
+//     tagesthemen start early, within the configured window?)
 //
 // The binary runs once per invocation and is meant to be scheduled daily
 // (systemd timer, see daily-brief.timer).
@@ -58,6 +61,7 @@ func main() {
 		"sma":         cfg.Sources.SMA.Enabled,
 		"weather":     cfg.Sources.Weather.Enabled,
 		"ev":          cfg.Sources.EV.Enabled,
+		"tv":          cfg.Sources.TV.Enabled,
 		"max_iter":    cfg.Mistral.MaxIterations,
 	}).Info("🚀 Starting daily brief generation")
 
@@ -157,6 +161,23 @@ func generateBrief(ctx context.Context, cfg *Config, logger *logrus.Logger) (str
 		tools = append(tools, newEVTool(evClient, logger))
 	}
 
+	if cfg.Sources.TV.Enabled {
+		tvClient, err := newTVClient(
+			cfg.Sources.TV.WindowStart,
+			cfg.Sources.TV.WindowEnd,
+			cfg.Sources.TV.Timezone,
+			cfg.Sources.TV.TimeoutSeconds,
+			cfg.Sources.TV.ARDURL,
+			cfg.Sources.TV.ZDFURL,
+			cfg.Sources.TV.ZDFAPIKey,
+			logger,
+		)
+		if err != nil {
+			return "", err
+		}
+		tools = append(tools, newTVTool(tvClient, logger))
+	}
+
 	now := time.Now()
 	systemPrompt := buildSystemPrompt(cfg, now)
 	userPrompt := buildUserPrompt(cfg, now)
@@ -189,7 +210,10 @@ Rules:
      🌧️ Tue 10 ·  9–15°C · 2.3mm (80%)
      ⛅ Wed 11 · 10–16°C · 0.5mm (20%) · 3.1h sun</pre>
      Weather emojis: ☀️ clear, 🌤️ mostly sunny, ⛅ partly cloudy, ☁️ overcast, 🌧️ rain, 🌦️ showers, ❄️ snow, ⛈️ thunderstorm, 🌫️ fog. Only show the precipitation probability when it is above 0%. Only show sunshine hours when above 0.
-  6. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
+  6. 📺 "TV news": the coming day's late news editions from the get_tv_news_schedule tool, as a compact monospace block inside <pre>...</pre> tags — ready to copy and paste, like the weather table. One line per edition. Use · as a separator between columns: start time (HH:MM), channel (ZDF / ARD), show name (heute journal / tagesthemen). Mark an edition that starts within the configured window with a trailing ⏰. Omit editions the tool reports as not scheduled that day. If no edition starts within the window, write one line after the block suggesting to re-watch heute (19:00) in the ZDF Mediathek. Example:
+     <pre>21:30 · ZDF · heute journal ⏰
+     23:30 · ARD · tagesthemen</pre>
+  7. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
 - Separate sections with a blank line. You may use a thin separator line (e.g. ───) between major sections if it improves readability.
 - Keep the whole brief under 300 words. Be concise and factual.
 - Only report information the tools actually returned. Never invent news, emails or measurements.
@@ -249,6 +273,10 @@ func buildSourcesDescription(cfg *Config) string {
 	}
 	if cfg.Sources.EV.Enabled {
 		sb.WriteString("\n- Electric vehicle (VW group, via the EU Data Act portal): call get_ev_status to read the battery state of charge, estimated range and charging status of the user's car.")
+	}
+	if cfg.Sources.TV.Enabled {
+		ws, we := tvWindowBounds(cfg.Sources.TV.WindowStart, cfg.Sources.TV.WindowEnd)
+		fmt.Fprintf(&sb, "\n- TV news (ARD Das Erste + ZDF): call get_tv_news_schedule to check the coming day's program — whether the late news editions heute-journal (ZDF) or tagesthemen (Das Erste) start within the %s window.", tvWindowLabel(ws, we))
 	}
 	return sb.String()
 }

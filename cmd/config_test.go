@@ -24,8 +24,8 @@ func TestReadConfigExample(t *testing.T) {
 	if len(cfg.Sources.Web) != 4 {
 		t.Errorf("expected 4 web sources, got %d", len(cfg.Sources.Web))
 	}
-	if !cfg.Sources.Email.Enabled || !cfg.Sources.SMA.Enabled || !cfg.Sources.EV.Enabled {
-		t.Errorf("expected email, SMA and EV to be enabled in the example")
+	if !cfg.Sources.Email.Enabled || !cfg.Sources.SMA.Enabled || !cfg.Sources.EV.Enabled || !cfg.Sources.TV.Enabled {
+		t.Errorf("expected email, SMA, EV and TV to be enabled in the example")
 	}
 }
 
@@ -89,6 +89,18 @@ sources:
 	}
 	if cfg.Sources.EV.TimeoutSeconds != 30 {
 		t.Errorf("default EV timeout: got %d, want 30", cfg.Sources.EV.TimeoutSeconds)
+	}
+	if cfg.Sources.TV.WindowStart != "21:15" {
+		t.Errorf("default TV window_start: got %q, want 21:15", cfg.Sources.TV.WindowStart)
+	}
+	if cfg.Sources.TV.WindowEnd != "21:30" {
+		t.Errorf("default TV window_end: got %q, want 21:30", cfg.Sources.TV.WindowEnd)
+	}
+	if cfg.Sources.TV.Timezone != "Europe/Berlin" {
+		t.Errorf("default TV timezone: got %q, want Europe/Berlin", cfg.Sources.TV.Timezone)
+	}
+	if cfg.Sources.TV.TimeoutSeconds != 15 {
+		t.Errorf("default TV timeout: got %d, want 15", cfg.Sources.TV.TimeoutSeconds)
 	}
 	if cfg.WebFetch.MaxChars != 8000 {
 		t.Errorf("default max_chars: got %d, want 8000", cfg.WebFetch.MaxChars)
@@ -199,6 +211,36 @@ sources:
 `,
 			wantErr: "url",
 		},
+		{
+			name: "tv bad window_start",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  tv: {enabled: true, window_start: "25:99"}
+`,
+			wantErr: "window_start",
+		},
+		{
+			name: "tv window start after end",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  tv: {enabled: true, window_start: "22:00", window_end: "21:00"}
+`,
+			wantErr: "window_start",
+		},
+		{
+			name: "tv unknown timezone",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  tv: {enabled: true, timezone: "Mars/Olympus"}
+`,
+			wantErr: "timezone",
+		},
 	}
 
 	for _, tc := range cases {
@@ -217,5 +259,18 @@ sources:
 func TestReadConfigMissingFile(t *testing.T) {
 	if _, err := readConfig(filepath.Join(t.TempDir(), "does-not-exist.yaml")); err == nil {
 		t.Fatal("expected error for missing config file")
+	}
+}
+
+func TestReadConfigTVOnlySource(t *testing.T) {
+	// sources.tv needs no credentials — it can be the only source.
+	path := writeTempConfig(t, `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  tv: {enabled: true}
+`)
+	if _, err := readConfig(path); err != nil {
+		t.Fatalf("tv as the only source should validate: %v", err)
 	}
 }

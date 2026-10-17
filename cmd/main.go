@@ -6,6 +6,9 @@
 //   - a Posteo mailbox (new mails) via the get_new_emails tool (IMAP)
 //   - an in-house SMA PV system (battery state, current production) via the
 //     get_pv_status tool (SMA Speedwire, via the sunny library — evcc's approach)
+//   - a VW group electric vehicle (battery state of charge, range, charging
+//     status) via the get_ev_status tool (VW EU Data Act portal — evcc's
+//     "drivesomethinggreater" approach)
 //
 // The binary runs once per invocation and is meant to be scheduled daily
 // (systemd timer, see daily-brief.timer).
@@ -54,6 +57,7 @@ func main() {
 		"email":       cfg.Sources.Email.Enabled,
 		"sma":         cfg.Sources.SMA.Enabled,
 		"weather":     cfg.Sources.Weather.Enabled,
+		"ev":          cfg.Sources.EV.Enabled,
 		"max_iter":    cfg.Mistral.MaxIterations,
 	}).Info("🚀 Starting daily brief generation")
 
@@ -135,6 +139,24 @@ func generateBrief(ctx context.Context, cfg *Config, logger *logrus.Logger) (str
 		tools = append(tools, newWeatherTool(weatherClient, logger))
 	}
 
+	if cfg.Sources.EV.Enabled {
+		evClient, err := newVWPortalClient(
+			cfg.Sources.EV.Brand,
+			cfg.Sources.EV.User,
+			cfg.Sources.EV.Password,
+			cfg.Sources.EV.VIN,
+			cfg.Sources.EV.PortalURL,
+			cfg.Sources.EV.IdentityURL,
+			cfg.Sources.EV.TimeoutSeconds,
+			nil,
+			logger,
+		)
+		if err != nil {
+			return "", err
+		}
+		tools = append(tools, newEVTool(evClient, logger))
+	}
+
 	now := time.Now()
 	systemPrompt := buildSystemPrompt(cfg, now)
 	userPrompt := buildUserPrompt(cfg, now)
@@ -161,12 +183,13 @@ Rules:
   1. 📰 "Top news": sort the most important headlines into categories, each with an emoji-prefixed bold header. Use these categories (skip any that have no stories): 🏛️ <b>Politics</b>, 💶 <b>Economy</b>, ⚽ <b>Sports</b>, 🎭 <b>Culture</b>. Under each category, 1-2 bullet points (use ▪ or • as the bullet), one line each. Multiple sources often cover the same story — report each event only once, merging details from different sources into a single bullet. Never list the same news item twice. Total: 3-5 bullet points across all categories.
   2. 📧 "Emails": only noteworthy mails (skip newsletters, spam and automated notifications), one line each: sender — subject.
   3. ☀️ "PV system": current PV production, battery state of charge, and a one-line assessment (e.g. battery charging from solar, surplus feeding into the grid). Use ⚡ for production, 🔋 for battery.
-  4. 🌤️ "Weather": a compact 7-day forecast in a monospace table inside <pre>...</pre> tags, one line per day. Columns: weather emoji, short day name and date, temperature range, precipitation, sunshine hours. Use · as a separator between columns. Examples:
+  4. 🚗 "Car": the user's electric vehicle — battery state of charge, estimated range and charging status. Use 🔋 for the state of charge. When the data is more than a few hours old, mention that.
+  5. 🌤️ "Weather": a compact 7-day forecast in a monospace table inside <pre>...</pre> tags, one line per day. Columns: weather emoji, short day name and date, temperature range, precipitation, sunshine hours. Use · as a separator between columns. Examples:
      <pre>☀️ Mon 09 ·  8–17°C · 0.0mm · 5.2h sun
      🌧️ Tue 10 ·  9–15°C · 2.3mm (80%)
      ⛅ Wed 11 · 10–16°C · 0.5mm (20%) · 3.1h sun</pre>
      Weather emojis: ☀️ clear, 🌤️ mostly sunny, ⛅ partly cloudy, ☁️ overcast, 🌧️ rain, 🌦️ showers, ❄️ snow, ⛈️ thunderstorm, 🌫️ fog. Only show the precipitation probability when it is above 0%. Only show sunshine hours when above 0.
-  5. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
+  6. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
 - Separate sections with a blank line. You may use a thin separator line (e.g. ───) between major sections if it improves readability.
 - Keep the whole brief under 300 words. Be concise and factual.
 - Only report information the tools actually returned. Never invent news, emails or measurements.
@@ -223,6 +246,9 @@ func buildSourcesDescription(cfg *Config) string {
 	}
 	if cfg.Sources.Weather.Enabled {
 		fmt.Fprintf(&sb, "\n- Weather: call get_weather_forecast for the %d-day forecast at the user's location.", cfg.Sources.Weather.Days)
+	}
+	if cfg.Sources.EV.Enabled {
+		sb.WriteString("\n- Electric vehicle (VW group, via the EU Data Act portal): call get_ev_status to read the battery state of charge, estimated range and charging status of the user's car.")
 	}
 	return sb.String()
 }

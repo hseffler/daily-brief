@@ -28,6 +28,10 @@ config with an `.example` file, logrus logging, a Makefile with
      (`gitlab.com/bboehmke/sunny`), no external exporter: current PV
      production, battery state of charge, battery voltage/current/power,
      grid feed-in/draw, and today's/total yield.
+   - **`get_ev_status`** — reads your VW group electric vehicle (ID.3 and
+     friends) via the **VW EU Data Act portal** (evcc's "drivesomethinggreater"
+     approach): battery state of charge, estimated range, charging status and
+     odometer, including the age of the data.
    - **`get_weather_forecast`** — fetches a 7-day weather forecast from the
      free **Open-Meteo** API (no API key required, uses DWD ICON models for
      Central Europe): per-day condition, min/max temperature, precipitation
@@ -35,8 +39,8 @@ config with an `.example` file, logrus logging, a Makefile with
 2. The model writes the final brief (English by default, configurable) with
    emoji-rich formatting: 📰 *Top news* (sorted into 🏛️ Politics, 💶 Economy,
    ⚽ Sports, 🎭 Culture categories, deduplicated across sources),
-   📧 *Emails*, ☀️ *PV system*, 🌤️ *Weather* (7-day table in `<pre>`),
-   and a 🔮 one-line outlook. Multiple news sources covering the same story
+   📧 *Emails*, ☀️ *PV system*, 🚗 *Car*, 🌤️ *Weather* (7-day table in
+   `<pre>`), and a 🔮 one-line outlook. Multiple news sources covering the same story
    are merged into a single bullet — no duplicate headlines.
 3. The brief is printed to stdout and sent to your Telegram chat (chunked to
    fit the 4096-character message limit). Messages are sent with Telegram's
@@ -78,6 +82,7 @@ comments. The important ones:
 | `sources.email` | Posteo IMAP: host `posteo.de`, port `993`, username = full address, password = **app password** |
 | `sources.sma` | inverter host (empty = discover), password (default `0000`), serial, interface, timeout |
 | `sources.weather` | Open-Meteo: `latitude`, `longitude`, `timezone`, `days` (default 7) |
+| `sources.ev` | VW group EV via the EU Data Act portal: `brand` (default `Volkswagen`), `user`, `password`, optional `vin`, timeout |
 | `telegram.token` / `telegram.chat_id` | Bot token from @BotFather; chat id via `getUpdates` |
 
 ### Posteo (email source)
@@ -121,6 +126,36 @@ Assistant, ...) is needed.
 
 Note: ennexOS devices (Tripower X, Sunny Boy Smart Energy) speak a different
 protocol and are not covered.
+
+### Electric vehicle (VW EU Data Act portal)
+
+`get_ev_status` reads your VW group electric vehicle (VW ID.3, e-Golf, e-Up,
+and Audi/Skoda/Seat/Cupra models) from the **VW EU Data Act portal**
+(`https://eu-data-act.drivesomethinggreater.com`) — the same data source evcc's
+`drivesomethinggreater` vehicle type uses, since VW retired third-party access
+to the old WeConnect app API. There is no standalone Go library for the portal;
+the client in `cmd/vw.go` is a minimal port of evcc's implementation.
+
+Prerequisite (one-time, in a browser): log in at the portal with your
+Volkswagen ID, confirm the consent screen, link the vehicle and enable the
+continuous data request (every 15 minutes). Without this the portal returns no
+data.
+
+```yaml
+sources:
+  ev:
+    enabled: true
+    brand: "Volkswagen"          # Volkswagen, Audi, Skoda, Seat or Cupra
+    user: "you@example.com"      # your Volkswagen ID (email)
+    password: "YOUR_VW_ID_PASSWORD"
+    # vin: "WVWZZZ..."           # optional: select the vehicle by VIN (first linked vehicle when empty)
+```
+
+The tool returns: battery state of charge, estimated range, charging status
+(not plugged in / plugged in / charging) and odometer. The portal is not a
+live API: it stores a dataset roughly every 15 minutes, and only while the
+vehicle is active (driving or charging) — a parked car's values may be hours
+old, which the tool output states explicitly.
 
 ### Weather (7-day forecast)
 
@@ -227,6 +262,13 @@ network.
 - **SMA: energy meter does not respond** — the Energy Meter / Home Manager
   only sends broadcasts; make sure nothing blocks UDP port 9522 between the
   device and this host.
+- **EV: login failed** — check `sources.ev` `user`/`password` (your Volkswagen
+  ID credentials) and `brand`.
+- **EV: "no EU Data Act data request is configured"** — complete the one-time
+  portal setup (log in at https://eu-data-act.drivesomethinggreater.com, link
+  the vehicle, enable the continuous data request).
+- **EV: data is hours old** — the portal only delivers data while the car is
+  active (driving or charging); this is expected for a parked car.
 - **zeit.de returns 403** — the main site uses JavaScript bot protection
   (Centinel Analytica). Use the RSS feed at `https://newsfeed.zeit.de/index`
   instead (the default in the example config).

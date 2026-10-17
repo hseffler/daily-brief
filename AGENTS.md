@@ -22,6 +22,8 @@ systemd timer. Project layout follows hostmonitor conventions.
 │   ├── tool_weather.go    # get_weather_forecast tool (Open-Meteo API)
 │   ├── sma.go             # SMA Speedwire client (sunny library, native UDP)
 │   ├── tool_sma.go        # get_pv_status tool
+│   ├── vw.go              # VW EU Data Act portal client (evcc's eudataact approach, ported)
+│   ├── tool_ev.go         # get_ev_status tool
 │   ├── telegram.go        # Telegram delivery (chunked, 429 backoff)
 │   └── *_test.go          # Unit/integration tests (httptest + fakes)
 ├── Makefile               # Build automation (overridable GOOS/GOARCH, root guards)
@@ -99,6 +101,31 @@ systemd timer. Project layout follows hostmonitor conventions.
   `GridEnergyImportKWh`/`GridEnergyExportKWh` (energy meters: raw Ws ÷
   3600000). Grid power is only reported when the device actually measures it
   (`HasGridPower`): plain inverters without an Energy Meter get an n/a line.
+- **EV** (`get_ev_status`): **VW group vehicles (ID.3, e-Golf, e-Up, Audi,
+  Skoda, Seat, Cupra)** via the **EU Data Act portal**
+  (`https://eu-data-act.drivesomethinggreater.com`) — the same source as
+  evcc's `drivesomethinggreater` vehicle type (`vehicle/vw/eudataact` in the
+  evcc repo), since VW retired third-party WeConnect API access. There is no
+  standalone Go library for the portal; `vw.go` is a minimal port of evcc's
+  client, adapted to the run-once model (no dataset store/merge — the newest
+  content dataset is read, walking back up to 3 datasets when it lacks the
+  SoC). Login is the OIDC flow against `identity.vwgroup.io` driven as an
+  HTML form login (email step, password step via the `window._IDK` JS block,
+  redirect chain with a cookie jar, marketing-consent page skipped via its
+  callback); the portal API authenticates via the session cookie only, with
+  one re-login on 401/403. The portal is not live telemetry: it stores a
+  zipped JSON dataset roughly every 15 minutes, only while the vehicle is
+  active, and the user must enable the data request once in a browser
+  (consent + link vehicle + continuous request). Reading vehicle data means
+  listing datasets (`/proxy_api/euda-apim/datadelivery/.../list`), downloading
+  the newest content dataset(s) (skipping `*_no_content_found.zip`
+  placeholders) and decoding the flat data-point list (`{key, dataFieldName,
+  value, timestampUtc}`). SoC for the ID.3 is the data point with GUID
+  `506cb83e-f99f-3af3-bbeb-0429b69a78d9` (`battery_state_report.soc`);
+  fallbacks `battery_level_HV.value`, `state_of_charge`, `hv_soc` (same
+  priority as evcc). Range (ID.3 GUID `0ca40e18-...`), charge status (evcc's
+  StatusA/B/C mapping) and odometer come from the same dataset. The tool
+  output always states the age of the data.
 
 ### 3. Delivery
 - Brief printed to stdout and sent to Telegram (bot API `sendMessage` with
@@ -128,9 +155,10 @@ systemd timer. Project layout follows hostmonitor conventions.
   mode; the model must not use Markdown or stray `<`/`>`/`&`): 📰 Top news
   (sorted into 🏛️ Politics, 💶 Economy, ⚽ Sports, 🎭 Culture categories,
   deduplicated across sources — same story reported once), 📧 Emails,
-  ☀️ PV system (⚡/🔋), 🌤️ Weather (7-day monospace table inside `<pre>`
-  tags, one line per day with weather emoji, temperature, precipitation and
-  sunshine hours), 🔮 outlook.
+  ☀️ PV system (⚡/🔋), 🚗 Car (🔋, with a note when the data is hours old),
+  🌤️ Weather (7-day monospace table inside `<pre>` tags, one line per day
+  with weather emoji, temperature, precipitation and sunshine hours), 🔮
+  outlook.
 - **Mistral Content type**: newer Mistral models return `content` as an array
   of content parts (`[{"type":"text","text":"..."}]`) instead of a plain
   string. The `Content` type in `mistral.go` is a string-based type with
@@ -153,7 +181,8 @@ systemd timer. Project layout follows hostmonitor conventions.
 - `github.com/PuerkitoBio/goquery` v1.13.0 — HTML parsing/extraction (direct)
 - `gitlab.com/bboehmke/sunny` v0.17.0 — SMA Speedwire protocol (direct; the
   same library evcc uses)
-- `golang.org/x/net` — indirect (charset handling via goquery)
+- `golang.org/x/net` — direct (charset handling via goquery; publicsuffix for
+  the VW portal cookie jar)
 - Mistral API, Telegram Bot API: plain `net/http`, no SDKs
 - Module: `github.com/hseffler/daily-brief`
 
@@ -166,6 +195,11 @@ systemd timer. Project layout follows hostmonitor conventions.
   - `httptest.Server` for Mistral request shape, SMA Webconnect flow (login,
     getValues parsing, 401 re-login, error mapping), Telegram chunking/429,
     web-page extraction (HTML articles + RSS feeds), and weather API parsing.
+  - `httptest` TLS servers fake the VW identity service and the EU Data Act
+    portal (login redirect chain, session cookie, 401 re-login,
+    marketing-consent skip, dataset zips, both vehicle-list response shapes).
+    `go test -tags live -run TestLiveVWReadout ./cmd` does a manual readout
+    against the real portal (reads `sources.ev` from the config).
 - `Content` type is tested for both wire formats (string and array of parts),
   including a regression test for array content in Mistral responses.
 - `emailSnippet` is tested against raw MIME fixtures (plain, multipart
@@ -224,7 +258,12 @@ When making changes to the codebase:
    `<table>` elements. If the model still emits markup Telegram rejects (400
    "can't parse entities"), the affected chunk is resent once as plain text
    with tags stripped, so delivery never fails on formatting.
-6. **Email is stateless**: mails are matched by a rolling `since_hours`
+6. **EV data freshness**: the EU Data Act portal delivers a dataset roughly
+   every 15 minutes and only while the vehicle is active (driving or
+   charging); a parked car's SoC/range may be hours old. The one-time browser
+   setup (consent + link vehicle + enable the continuous data request) is
+   mandatory. VW group brands only (VW, Audi, Skoda, Seat, Cupra).
+7. **Email is stateless**: mails are matched by a rolling `since_hours`
    window, not by dedupe state. A delayed run (systemd catch-up after
    downtime) or a manual second run repeats mails from the window, and
    mails from a failed run's window are not re-briefed.

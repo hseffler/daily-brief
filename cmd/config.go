@@ -65,6 +65,16 @@ type Config struct {
 			URL            string  `yaml:"url"`
 			TimeoutSeconds int     `yaml:"timeout_seconds"`
 		} `yaml:"weather"`
+		EV struct {
+			Enabled        bool   `yaml:"enabled"`
+			Brand          string `yaml:"brand"`
+			User           string `yaml:"user"`
+			Password       string `yaml:"password"`
+			VIN            string `yaml:"vin"`
+			TimeoutSeconds int    `yaml:"timeout_seconds"`
+			PortalURL      string `yaml:"portal_url"`   // only override for proxies/tests
+			IdentityURL    string `yaml:"identity_url"` // only override for proxies/tests
+		} `yaml:"ev"`
 	} `yaml:"sources"`
 
 	Telegram struct {
@@ -128,6 +138,12 @@ func (c *Config) setDefaults() {
 	if c.Sources.Weather.TimeoutSeconds == 0 {
 		c.Sources.Weather.TimeoutSeconds = 15
 	}
+	if c.Sources.EV.Brand == "" {
+		c.Sources.EV.Brand = "Volkswagen"
+	}
+	if c.Sources.EV.TimeoutSeconds == 0 {
+		c.Sources.EV.TimeoutSeconds = 30
+	}
 	if c.WebFetch.MaxChars == 0 {
 		c.WebFetch.MaxChars = 8000
 	}
@@ -144,8 +160,8 @@ func (c *Config) validate() error {
 	if c.Telegram.Token == "" || c.Telegram.ChatID == "" {
 		return fmt.Errorf("telegram.token and telegram.chat_id are required (the brief is delivered via Telegram)")
 	}
-	if len(c.Sources.Web) == 0 && !c.Sources.Email.Enabled && !c.Sources.SMA.Enabled && !c.Sources.Weather.Enabled {
-		return fmt.Errorf("no sources enabled: configure at least one of sources.web, sources.email, sources.sma or sources.weather")
+	if len(c.Sources.Web) == 0 && !c.Sources.Email.Enabled && !c.Sources.SMA.Enabled && !c.Sources.Weather.Enabled && !c.Sources.EV.Enabled {
+		return fmt.Errorf("no sources enabled: configure at least one of sources.web, sources.email, sources.sma, sources.weather or sources.ev")
 	}
 	for i, w := range c.Sources.Web {
 		if w.Name == "" || w.URL == "" {
@@ -155,6 +171,14 @@ func (c *Config) validate() error {
 	if c.Sources.Email.Enabled {
 		if c.Sources.Email.Username == "" || c.Sources.Email.Password == "" {
 			return fmt.Errorf("sources.email: username and password are required")
+		}
+	}
+	if c.Sources.EV.Enabled {
+		if c.Sources.EV.User == "" || c.Sources.EV.Password == "" {
+			return fmt.Errorf("sources.ev: user and password are required (your Volkswagen ID credentials)")
+		}
+		if !vwBrandKnown(c.Sources.EV.Brand) {
+			return fmt.Errorf("sources.ev: unknown brand %q (supported: Volkswagen, Audi, Skoda, Seat, Cupra)", c.Sources.EV.Brand)
 		}
 	}
 	// sources.sma needs no required fields: with neither host nor serial the

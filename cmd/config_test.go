@@ -24,8 +24,8 @@ func TestReadConfigExample(t *testing.T) {
 	if len(cfg.Sources.Web) != 4 {
 		t.Errorf("expected 4 web sources, got %d", len(cfg.Sources.Web))
 	}
-	if !cfg.Sources.Email.Enabled || !cfg.Sources.SMA.Enabled {
-		t.Errorf("expected email and SMA to be enabled in the example")
+	if !cfg.Sources.Email.Enabled || !cfg.Sources.SMA.Enabled || !cfg.Sources.EV.Enabled {
+		t.Errorf("expected email, SMA and EV to be enabled in the example")
 	}
 }
 
@@ -83,6 +83,12 @@ sources:
 	}
 	if cfg.Sources.Weather.TimeoutSeconds != 15 {
 		t.Errorf("default weather timeout: got %d, want 15", cfg.Sources.Weather.TimeoutSeconds)
+	}
+	if cfg.Sources.EV.Brand != "Volkswagen" {
+		t.Errorf("default EV brand: got %q, want Volkswagen", cfg.Sources.EV.Brand)
+	}
+	if cfg.Sources.EV.TimeoutSeconds != 30 {
+		t.Errorf("default EV timeout: got %d, want 30", cfg.Sources.EV.TimeoutSeconds)
 	}
 	if cfg.WebFetch.MaxChars != 8000 {
 		t.Errorf("default max_chars: got %d, want 8000", cfg.WebFetch.MaxChars)
@@ -143,6 +149,26 @@ sources:
 			wantErr: "password",
 		},
 
+		{
+			name: "ev without password",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  ev: {enabled: true, user: "you@example.com"}
+`,
+			wantErr: "password",
+		},
+		{
+			name: "ev unknown brand",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  ev: {enabled: true, user: "you@example.com", password: "p", brand: "Tesla"}
+`,
+			wantErr: "unknown brand",
+		},
 		{
 			name: "weather without coordinates",
 			content: `

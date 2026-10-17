@@ -14,6 +14,7 @@ func testPromptConfig() *Config {
 	cfg.Sources.SMA.Enabled = true
 	cfg.Sources.Weather.Enabled = true
 	cfg.Sources.Weather.Days = 7
+	cfg.Sources.EV.Enabled = true
 	return cfg
 }
 
@@ -28,6 +29,8 @@ func TestDefaultSystemPromptRenders(t *testing.T) {
 		"- Email: the user's Posteo mailbox — call get_new_emails",
 		"- SMA PV system: call get_pv_status",
 		"- Weather: call get_weather_forecast for the 7-day forecast",
+		"- Electric vehicle (VW group, via the EU Data Act portal): call get_ev_status",
+		`"Car": the user's electric vehicle — battery state of charge, estimated range and charging status`,
 		`"Weather": a compact 7-day forecast in a monospace table inside <pre>...</pre> tags`,
 	} {
 		if !strings.Contains(sp, want) {
@@ -80,6 +83,14 @@ func TestSourcesDescriptionReflectsEnabledSources(t *testing.T) {
 	}
 	if !strings.Contains(desc, "get_new_emails") || !strings.Contains(desc, "get_pv_status") {
 		t.Errorf("enabled sources missing:\n%s", desc)
+	}
+	if !strings.Contains(desc, "get_ev_status") {
+		t.Errorf("enabled EV source missing:\n%s", desc)
+	}
+
+	cfg.Sources.EV.Enabled = false
+	if desc := buildSourcesDescription(cfg); strings.Contains(desc, "get_ev_status") {
+		t.Errorf("disabled EV should not be listed:\n%s", desc)
 	}
 }
 

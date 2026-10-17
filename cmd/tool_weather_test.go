@@ -18,7 +18,8 @@ const cannedWeatherResponse = `{"daily":{
 	"temperature_2m_max":[21.4,18.2,17.6],
 	"temperature_2m_min":[11.2,12.4,10.8],
 	"precipitation_sum":[0.0,4.2,1.1],
-	"precipitation_probability_max":[10,85,60]
+	"precipitation_probability_max":[10,85,60],
+	"sunshine_duration":[18720,3600,7200]
 }}`
 
 func TestWeatherFetchAndFormat(t *testing.T) {
@@ -36,7 +37,7 @@ func TestWeatherFetchAndFormat(t *testing.T) {
 		if got := q.Get("timezone"); got != "Europe/Berlin" {
 			t.Errorf("timezone param: got %q", got)
 		}
-		if got := q.Get("daily"); !strings.Contains(got, "weather_code") || !strings.Contains(got, "precipitation_probability_max") {
+		if got := q.Get("daily"); !strings.Contains(got, "weather_code") || !strings.Contains(got, "precipitation_probability_max") || !strings.Contains(got, "sunshine_duration") {
 			t.Errorf("daily param: got %q", got)
 		}
 		w.Write([]byte(cannedWeatherResponse))
@@ -53,9 +54,9 @@ func TestWeatherFetchAndFormat(t *testing.T) {
 
 	for _, want := range []string{
 		"Weather forecast for the coming 3 day(s) (52.5200, 13.4050, timezone Europe/Berlin)",
-		"2025-05-14: mainly clear, 11 to 21 °C, precipitation 0.0 mm (max 10 %)",
-		"2025-05-15: light rain, 12 to 18 °C, precipitation 4.2 mm (max 85 %)",
-		"2025-05-16: thunderstorm, 11 to 18 °C, precipitation 1.1 mm (max 60 %)",
+		"2025-05-14: mainly clear, 11 to 21 °C, precipitation 0.0 mm (max 10 %), sunshine 5.2 h",
+		"2025-05-15: light rain, 12 to 18 °C, precipitation 4.2 mm (max 85 %), sunshine 1.0 h",
+		"2025-05-16: thunderstorm, 11 to 18 °C, precipitation 1.1 mm (max 60 %), sunshine 2.0 h",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
@@ -108,8 +109,8 @@ func TestWeatherEmptyResponse(t *testing.T) {
 }
 
 func TestWeatherMissingPrecipProbability(t *testing.T) {
-	// Older API responses may omit precipitation_probability_max; the
-	// formatter must then omit the percentage instead of showing -1.
+	// Older API responses may omit precipitation_probability_max and
+	// sunshine_duration; the formatter must then omit both.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"daily":{
 			"time":["2025-05-14"],
@@ -131,6 +132,9 @@ func TestWeatherMissingPrecipProbability(t *testing.T) {
 	}
 	if strings.Contains(out, "%") {
 		t.Errorf("no probability should be shown when absent:\n%s", out)
+	}
+	if strings.Contains(out, "sunshine") {
+		t.Errorf("no sunshine should be shown when absent:\n%s", out)
 	}
 }
 
@@ -161,6 +165,35 @@ func TestWeatherClientDefaults(t *testing.T) {
 	}
 }
 
+func TestWeatherSunshineConversion(t *testing.T) {
+	// sunshine_duration is in seconds; the formatter shows hours.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"daily":{
+			"time":["2025-05-14","2025-05-15"],
+			"weather_code":[0,0],
+			"temperature_2m_max":[20.0,20.0],
+			"temperature_2m_min":[10.0,10.0],
+			"precipitation_sum":[0.0,0.0],
+			"sunshine_duration":[36000,0]
+		}}`))
+	}))
+	defer srv.Close()
+
+	client := newWeatherClient(52.52, 13.405, "", 7, 5, srv.URL, testLogger())
+	out, err := newWeatherTool(client, testLogger()).Run(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// 36000 s = 10.0 h
+	if !strings.Contains(out, "sunshine 10.0 h") {
+		t.Errorf("expected 10.0 h sunshine (36000 s):\n%s", out)
+	}
+	// 0 s = 0.0 h — shown as "sunshine 0.0 h"
+	if !strings.Contains(out, "sunshine 0.0 h") {
+		t.Errorf("expected 0.0 h sunshine (0 s):\n%s", out)
+	}
+}
+
 func ExampleformatWeatherForecast() {
 	days := []weatherDay{{
 		Date:          time.Date(2025, 5, 14, 0, 0, 0, 0, time.UTC),
@@ -169,9 +202,10 @@ func ExampleformatWeatherForecast() {
 		TempMaxC:      21.4,
 		PrecipMM:      0,
 		PrecipProbMax: 10,
+		SunshineHours: 5.2,
 	}}
 	fmt.Print(formatWeatherForecast(days, 52.52, 13.405, "Europe/Berlin"))
 	// Output:
 	// Weather forecast for the coming 1 day(s) (52.5200, 13.4050, timezone Europe/Berlin):
-	// - Wed 2025-05-14: mainly clear, 11 to 21 °C, precipitation 0.0 mm (max 10 %)
+	// - Wed 2025-05-14: mainly clear, 11 to 21 °C, precipitation 0.0 mm (max 10 %), sunshine 5.2 h
 }

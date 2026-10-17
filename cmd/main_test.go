@@ -28,7 +28,7 @@ func TestDefaultSystemPromptRenders(t *testing.T) {
 		"- Email: the user's Posteo mailbox — call get_new_emails",
 		"- SMA PV system: call get_pv_status",
 		"- Weather: call get_weather_forecast for the 7-day forecast",
-		`"Weather": a compact 7-day forecast, one line per day`,
+		`"Weather": a compact 7-day forecast in a monospace table inside <pre>...</pre> tags`,
 	} {
 		if !strings.Contains(sp, want) {
 			t.Errorf("system prompt missing %q:\n%s", want, sp)

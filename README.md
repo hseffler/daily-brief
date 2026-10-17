@@ -29,13 +29,15 @@ config with an `.example` file, logrus logging, a Makefile with
      production, battery state of charge, battery voltage/current/power,
      grid feed-in/draw, and today's/total yield.
    - **`get_weather_forecast`** — fetches a 7-day weather forecast from the
-     free **Open-Meteo** API (no API key required): per-day condition,
-     min/max temperature, precipitation amount and probability.
+     free **Open-Meteo** API (no API key required, uses DWD ICON models for
+     Central Europe): per-day condition, min/max temperature, precipitation
+     amount and probability, and sunshine duration.
 2. The model writes the final brief (English by default, configurable) with
-   emoji-rich formatting: 📰 *Top news* (deduplicated across sources),
-   📧 *Emails*, ☀️ *PV system*, 🌤️ *Weather* (7-day grid), and a 🔮 one-line
-   outlook. Multiple news sources covering the same story are merged into a
-   single bullet — no duplicate headlines.
+   emoji-rich formatting: 📰 *Top news* (sorted into 🏛️ Politics, 💶 Economy,
+   ⚽ Sports, 🎭 Culture categories, deduplicated across sources),
+   📧 *Emails*, ☀️ *PV system*, 🌤️ *Weather* (7-day table in `<pre>`),
+   and a 🔮 one-line outlook. Multiple news sources covering the same story
+   are merged into a single bullet — no duplicate headlines.
 3. The brief is printed to stdout and sent to your Telegram chat (chunked to
    fit the 4096-character message limit). Messages are sent with Telegram's
    HTML parse mode, so the brief's <b> section headers render bold; the rest
@@ -136,8 +138,9 @@ sources:
 ```
 
 The tool returns per day: weather condition (WMO code mapped to text),
-min/max temperature, precipitation amount and probability. The brief renders
-this as a compact 7-day grid, one line per day, with a weather emoji
+min/max temperature, precipitation amount and probability, and sunshine
+duration in hours. The brief renders this as a compact 7-day table inside
+a `<pre>` monospace block, one line per day, with a weather emoji
 (☀️ 🌤️ ⛅ ☁️ 🌧️ 🌦️ ❄️ ⛈️ 🌫️).
 
 ### RSS feeds as news sources

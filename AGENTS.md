@@ -60,9 +60,11 @@ systemd timer. Project layout follows hostmonitor conventions.
   headlines (`- Title`). This is how zeit.de (bot-protected on the main site),
   taz and WELT are read — via their RSS feeds on separate domains.
 - **Weather** (`get_weather_forecast`): Open-Meteo forecast API (free, no API
-  key). Returns per-day: WMO weather code mapped to text, min/max temperature,
-  precipitation amount and probability max. The brief renders this as a
-  compact 7-day grid with weather emojis.
+  key; uses DWD ICON models for Central Europe). Returns per-day: WMO weather
+  code mapped to text, min/max temperature, precipitation amount and
+  probability max, and sunshine duration (seconds converted to hours). The
+  brief renders this as a compact 7-day monospace table inside `<pre>` tags
+  with weather emojis.
 - **Email** (`get_new_emails`): Posteo IMAP over TLS (`posteo.de:993`,
   go-imap v1). Mailbox opened **read-only**. Two-phase UID FETCH: metadata
   first, full bodies only for messages ≤ 512 KiB. Snippets come from the
@@ -100,7 +102,8 @@ systemd timer. Project layout follows hostmonitor conventions.
 
 ### 3. Delivery
 - Brief printed to stdout and sent to Telegram (bot API `sendMessage` with
-  `parse_mode=HTML`, so the brief's `<b>` section headers render bold),
+  `parse_mode=HTML`, so the brief's `<b>` section headers render bold and
+  `<pre>` blocks render as monospace),
   split into ≤4000-rune chunks (rune-safe, newline-preferred, never
   splitting inside an HTML tag), one retry with the server-advised
   `retry_after` on HTTP 429, and a plain-text fallback (tags stripped, no
@@ -123,9 +126,11 @@ systemd timer. Project layout follows hostmonitor conventions.
 - **Brief format**: the default prompt asks for emoji-rich formatting with
   `<b>` bold section headers (messages are sent with Telegram's HTML parse
   mode; the model must not use Markdown or stray `<`/`>`/`&`): 📰 Top news
-  (deduplicated across sources — same story reported once), 📧 Emails,
-  ☀️ PV system (⚡/🔋), 🌤️ Weather (7-day grid, one line per day with
-  weather emoji), 🔮 outlook.
+  (sorted into 🏛️ Politics, 💶 Economy, ⚽ Sports, 🎭 Culture categories,
+  deduplicated across sources — same story reported once), 📧 Emails,
+  ☀️ PV system (⚡/🔋), 🌤️ Weather (7-day monospace table inside `<pre>`
+  tags, one line per day with weather emoji, temperature, precipitation and
+  sunshine hours), 🔮 outlook.
 - **Mistral Content type**: newer Mistral models return `content` as an array
   of content parts (`[{"type":"text","text":"..."}]`) instead of a plain
   string. The `Content` type in `mistral.go` is a string-based type with
@@ -214,8 +219,9 @@ When making changes to the codebase:
    no built-in scheduler loop.
 4. **English/German briefs only**: `brief.language` is validated to `en`/`de`.
 5. **Telegram HTML formatting**: messages are sent with `parse_mode=HTML`;
-   the prompt asks the model for `<b>` section headers and no stray
-   `<`/`>`/`&`. If the model still emits markup Telegram rejects (400
+   the prompt asks the model for `<b>` section headers and `<pre>` blocks
+   for the weather table, and no stray `<`/`>`/`&`. Telegram does not support
+   `<table>` elements. If the model still emits markup Telegram rejects (400
    "can't parse entities"), the affected chunk is resent once as plain text
    with tags stripped, so delivery never fails on formatting.
 6. **Email is stateless**: mails are matched by a rolling `since_hours`

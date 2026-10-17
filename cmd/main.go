@@ -156,16 +156,16 @@ Today's date: {date}.
 
 Rules:
 - Write the brief in {language}.
-- Use emojis and visual formatting to make the brief scannable and pleasant to read. The message is sent to Telegram with HTML formatting: make each section header bold with <b>...</b> (e.g. 📰 <b>Top news</b>) and keep the emojis. Use no other markup — no Markdown (**bold**, *italic*, backticks), it would be shown literally. Outside <b> tags, never write the characters <, > or & (write "and" instead of "&").
+- Use emojis and visual formatting to make the brief scannable and pleasant to read. The message is sent to Telegram with HTML formatting: make each section header bold with <b>...</b> (e.g. 📰 <b>Top news</b>) and keep the emojis. For the weather section, wrap the forecast in <pre>...</pre> to create a monospace table layout. Use no other markup — no Markdown (**bold**, *italic*, backticks), no HTML tables (Telegram does not support <table>), it would be shown literally. Outside <b> and <pre> tags, never write the characters <, > or & (write "and" instead of "&").
 - Structure the brief with exactly these sections, in this order, each with an emoji-prefixed header and a blank line before it:
-  1. 📰 "Top news": 3-5 bullet points (use ▪ or • as the bullet), one line each, with the most important headlines from the web sources. Multiple sources often cover the same story — report each event only once, merging details from different sources into a single bullet. Never list the same news item twice.
+  1. 📰 "Top news": sort the most important headlines into categories, each with an emoji-prefixed bold header. Use these categories (skip any that have no stories): 🏛️ <b>Politics</b>, 💶 <b>Economy</b>, ⚽ <b>Sports</b>, 🎭 <b>Culture</b>. Under each category, 1-2 bullet points (use ▪ or • as the bullet), one line each. Multiple sources often cover the same story — report each event only once, merging details from different sources into a single bullet. Never list the same news item twice. Total: 3-5 bullet points across all categories.
   2. 📧 "Emails": only noteworthy mails (skip newsletters, spam and automated notifications), one line each: sender — subject.
   3. ☀️ "PV system": current PV production, battery state of charge, and a one-line assessment (e.g. battery charging from solar, surplus feeding into the grid). Use ⚡ for production, 🔋 for battery.
-  4. 🌤️ "Weather": a compact 7-day forecast, one line per day. Start each line with a weather emoji, then the short day name and date, temperature range, and precipitation. Use · as a separator. Examples:
-     ☀️ Mon 09 ·  8–17°C · 0.0mm
+  4. 🌤️ "Weather": a compact 7-day forecast in a monospace table inside <pre>...</pre> tags, one line per day. Columns: weather emoji, short day name and date, temperature range, precipitation, sunshine hours. Use · as a separator between columns. Examples:
+     <pre>☀️ Mon 09 ·  8–17°C · 0.0mm · 5.2h sun
      🌧️ Tue 10 ·  9–15°C · 2.3mm (80%)
-     ⛅ Wed 11 · 10–16°C · 0.5mm (20%)
-     Weather emojis: ☀️ clear, 🌤️ mostly sunny, ⛅ partly cloudy, ☁️ overcast, 🌧️ rain, 🌦️ showers, ❄️ snow, ⛈️ thunderstorm, 🌫️ fog. Only show the precipitation probability when it is above 0%.
+     ⛅ Wed 11 · 10–16°C · 0.5mm (20%) · 3.1h sun</pre>
+     Weather emojis: ☀️ clear, 🌤️ mostly sunny, ⛅ partly cloudy, ☁️ overcast, 🌧️ rain, 🌦️ showers, ❄️ snow, ⛈️ thunderstorm, 🌫️ fog. Only show the precipitation probability when it is above 0%. Only show sunshine hours when above 0.
   5. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
 - Separate sections with a blank line. You may use a thin separator line (e.g. ───) between major sections if it improves readability.
 - Keep the whole brief under 300 words. Be concise and factual.

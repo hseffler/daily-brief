@@ -65,7 +65,8 @@ type weatherDay struct {
 	TempMinC      float64
 	TempMaxC      float64
 	PrecipMM      float64
-	PrecipProbMax int // percent; -1 when the API did not return it
+	PrecipProbMax int     // percent; -1 when the API did not return it
+	SunshineHours float64 // -1 when the API did not return it
 }
 
 // weatherClient fetches the Open-Meteo daily forecast.
@@ -114,6 +115,7 @@ type openMeteoResponse struct {
 		Temperature2mMin            []float64 `json:"temperature_2m_min"`
 		PrecipitationSum            []float64 `json:"precipitation_sum"`
 		PrecipitationProbabilityMax []int     `json:"precipitation_probability_max"`
+		SunshineDuration            []float64 `json:"sunshine_duration"` // seconds
 	} `json:"daily"`
 }
 
@@ -122,7 +124,7 @@ func (c *weatherClient) fetchForecast(ctx context.Context) ([]weatherDay, error)
 	q := url.Values{}
 	q.Set("latitude", fmt.Sprintf("%.4f", c.latitude))
 	q.Set("longitude", fmt.Sprintf("%.4f", c.longitude))
-	q.Set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max")
+	q.Set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,sunshine_duration")
 	q.Set("forecast_days", fmt.Sprintf("%d", c.days))
 	if c.timezone != "" {
 		q.Set("timezone", c.timezone)
@@ -167,7 +169,7 @@ func (c *weatherClient) fetchForecast(ctx context.Context) ([]weatherDay, error)
 			c.logger.WithError(err).Warnf("skipping malformed forecast date %q", dateStr)
 			continue
 		}
-		day := weatherDay{Date: date, PrecipProbMax: -1}
+		day := weatherDay{Date: date, PrecipProbMax: -1, SunshineHours: -1}
 		if i < len(d.WeatherCode) {
 			day.Condition = weatherCondition(d.WeatherCode[i])
 		}
@@ -182,6 +184,9 @@ func (c *weatherClient) fetchForecast(ctx context.Context) ([]weatherDay, error)
 		}
 		if i < len(d.PrecipitationProbabilityMax) {
 			day.PrecipProbMax = d.PrecipitationProbabilityMax[i]
+		}
+		if i < len(d.SunshineDuration) {
+			day.SunshineHours = d.SunshineDuration[i] / 3600.0
 		}
 		days = append(days, day)
 	}
@@ -210,6 +215,9 @@ func formatWeatherForecast(days []weatherDay, latitude, longitude float64, timez
 		if d.PrecipProbMax >= 0 {
 			fmt.Fprintf(&sb, " (max %d %%)", d.PrecipProbMax)
 		}
+		if d.SunshineHours >= 0 {
+			fmt.Fprintf(&sb, ", sunshine %.1f h", d.SunshineHours)
+		}
 		sb.WriteString("\n")
 	}
 	return sb.String()
@@ -220,7 +228,7 @@ func newWeatherTool(client *weatherClient, logger *logrus.Logger) Tool {
 	return Tool{
 		Name: "get_weather_forecast",
 		Description: "Fetch the weather forecast for the user's location for the coming days: per day the " +
-			"weather condition, minimum/maximum temperature, and precipitation amount and probability. " +
+			"weather condition, minimum/maximum temperature, precipitation amount and probability, and sunshine duration. " +
 			"Use this for the weather section of the brief.",
 		Parameters: json.RawMessage(`{"type": "object", "properties": {}}`),
 		Run: func(ctx context.Context, args json.RawMessage) (string, error) {

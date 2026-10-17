@@ -12,7 +12,7 @@ config with an `.example` file, logrus logging, a Makefile with
 ## What it does
 
 1. An agent loop (Mistral `chat/completions` with tool calling) wakes up and
-   reads the configured sources using four tools:
+   reads the configured sources using the following tools:
    - **`fetch_webpage`** — downloads a web page or RSS feed (e.g. zeit.de,
      spiegel.de, taz, welt) and returns its readable text (headlines/article
      teasers). RSS/XML feeds are detected automatically and rendered as a
@@ -32,6 +32,12 @@ config with an `.example` file, logrus logging, a Makefile with
      friends) via the **VW EU Data Act portal** (evcc's "drivesomethinggreater"
      approach): battery state of charge, estimated range, charging status and
      odometer, including the age of the data.
+   - **`get_pet_status`** — reads your cats' inside/outside location from
+     your **SureFlap cat flap** (Connect line, via the Sure Petcare cloud
+     API — unofficial, the same API the app and Home Assistant's surepetcare
+     integration use; client library:
+     [go-sure](https://github.com/perbu/go-sure)): for each pet, inside or
+     outside, and since when the location last changed.
    - **`get_weather_forecast`** — fetches a 7-day weather forecast from the
      free **Open-Meteo** API (no API key required, uses DWD ICON models for
      Central Europe): per-day condition, min/max temperature, precipitation
@@ -44,7 +50,7 @@ config with an `.example` file, logrus logging, a Makefile with
 2. The model writes the final brief (English by default, configurable) with
    emoji-rich formatting: 📰 *Top news* (sorted into 🏛️ Politics, 💶 Economy,
    ⚽ Sports, 🎭 Culture categories, deduplicated across sources),
-   📧 *Emails*, ☀️ *PV system*, 🚗 *Car*, 🌤️ *Weather* (7-day table in
+   📧 *Emails*, ☀️ *PV system*, 🚗 *Car*, 🐱 *Cats*, 🌤️ *Weather* (7-day table in
    `<pre>`), 📺 *TV news* (copy-pasteable `<pre>` block: start time, channel
    and show per late-news edition, ⏰ on the edition inside the configured
    window; the heute re-watch tip when nothing is in the slot), and a 🔮
@@ -91,6 +97,7 @@ comments. The important ones:
 | `sources.sma` | inverter host (empty = discover), password (default `0000`), serial, interface, timeout |
 | `sources.weather` | Open-Meteo: `latitude`, `longitude`, `timezone`, `days` (default 7) |
 | `sources.ev` | VW group EV via the EU Data Act portal: `brand` (default `Volkswagen`), `user`, `password`, optional `vin`, timeout |
+| `sources.pets` | Cats via the SureFlap cat flap (Sure Petcare cloud API): `email`, `password` (your Sure Petcare account) |
 | `sources.tv` | TV news: `window_start`/`window_end` (default `21:15`/`21:30`), `timezone` (default `Europe/Berlin`), timeout |
 | `telegram.token` / `telegram.chat_id` | Bot token from @BotFather; chat id via `getUpdates` |
 
@@ -165,6 +172,30 @@ The tool returns: battery state of charge, estimated range, charging status
 live API: it stores a dataset roughly every 15 minutes, and only while the
 vehicle is active (driving or charging) — a parked car's values may be hours
 old, which the tool output states explicitly.
+
+### Cats (SureFlap cat flap)
+
+`get_pet_status` reads the inside/outside location of your cats from your
+**SureFlap cat flap** (Connect line: Cat Flap Connect + Sure Petcare Hub) via
+the **Sure Petcare cloud API**, using the
+[go-sure](https://github.com/perbu/go-sure) Go library. Sure Petcare
+publishes no official developer API for these products; the library talks to
+the reverse-engineered app API — the same one the Sure Petcare app and Home
+Assistant's surepetcare integration use.
+
+```yaml
+sources:
+  pets:
+    enabled: true
+    email: "you@example.com"       # your Sure Petcare account email
+    password: "YOUR_SUREPETCARE_PASSWORD"
+```
+
+The location is tracked by the flap: every passage through it updates the
+pet's whereabouts (near real-time), and it can be overridden manually in the
+app. A cat that goes through a window or a human door is not accounted for.
+The tool reports each pet's location and when it last changed; the brief
+renders it as a 🐱 "Cats" section (🏠 inside, 🌳 outside).
 
 ### Weather (7-day forecast)
 
@@ -310,6 +341,8 @@ network.
   device and this host.
 - **EV: login failed** — check `sources.ev` `user`/`password` (your Volkswagen
   ID credentials) and `brand`.
+- **Pets: login failed** — check `sources.pets` `email`/`password` (your Sure
+  Petcare account credentials — the app login).
 - **EV: "no EU Data Act data request is configured"** — complete the one-time
   portal setup (log in at https://eu-data-act.drivesomethinggreater.com, link
   the vehicle, enable the continuous data request).

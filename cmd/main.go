@@ -12,6 +12,8 @@
 //   - the evening TV program of ARD (Das Erste) and ZDF via the
 //     get_tv_news_schedule tool (public program APIs — do heute-journal and
 //     tagesthemen start early, within the configured window?)
+//   - the user's cats (inside/outside) via the get_pet_status tool (Sure
+//     Petcare cloud API behind the SureFlap cat flap)
 //
 // The binary runs once per invocation and is meant to be scheduled daily
 // (systemd timer, see daily-brief.timer).
@@ -62,6 +64,7 @@ func main() {
 		"weather":     cfg.Sources.Weather.Enabled,
 		"ev":          cfg.Sources.EV.Enabled,
 		"tv":          cfg.Sources.TV.Enabled,
+		"pets":        cfg.Sources.Pets.Enabled,
 		"max_iter":    cfg.Mistral.MaxIterations,
 	}).Info("🚀 Starting daily brief generation")
 
@@ -178,6 +181,11 @@ func generateBrief(ctx context.Context, cfg *Config, logger *logrus.Logger) (str
 		tools = append(tools, newTVTool(tvClient, logger))
 	}
 
+	if cfg.Sources.Pets.Enabled {
+		petsClient := newSureFlapClient(cfg.Sources.Pets.Email, cfg.Sources.Pets.Password)
+		tools = append(tools, newPetsTool(petsClient, logger))
+	}
+
 	now := time.Now()
 	systemPrompt := buildSystemPrompt(cfg, now)
 	userPrompt := buildUserPrompt(cfg, now)
@@ -205,15 +213,16 @@ Rules:
   2. 📧 "Emails": only noteworthy mails (skip newsletters, spam and automated notifications), one line each: sender — subject.
   3. ☀️ "PV system": current PV production, battery state of charge, and a one-line assessment (e.g. battery charging from solar, surplus feeding into the grid). Use ⚡ for production, 🔋 for battery.
   4. 🚗 "Car": the user's electric vehicle — battery state of charge, estimated range and charging status. Use 🔋 for the state of charge. When the data is more than a few hours old, mention that.
-  5. 🌤️ "Weather": a compact 7-day forecast in a monospace table inside <pre>...</pre> tags, one line per day. Columns: weather emoji, short day name and date, temperature range, precipitation, sunshine hours. Use · as a separator between columns. Examples:
+  5. 🐱 "Cats": for each cat, whether it is inside (🏠) or outside (🌳), and since when the location last changed. One line per cat.
+  6. 🌤️ "Weather": a compact 7-day forecast in a monospace table inside <pre>...</pre> tags, one line per day. Columns: weather emoji, short day name and date, temperature range, precipitation, sunshine hours. Use · as a separator between columns. Examples:
      <pre>☀️ Mon 09 ·  8–17°C · 0.0mm · 5.2h sun
      🌧️ Tue 10 ·  9–15°C · 2.3mm (80%)
      ⛅ Wed 11 · 10–16°C · 0.5mm (20%) · 3.1h sun</pre>
      Weather emojis: ☀️ clear, 🌤️ mostly sunny, ⛅ partly cloudy, ☁️ overcast, 🌧️ rain, 🌦️ showers, ❄️ snow, ⛈️ thunderstorm, 🌫️ fog. Only show the precipitation probability when it is above 0%. Only show sunshine hours when above 0.
-  6. 📺 "TV news": the coming day's late news editions from the get_tv_news_schedule tool, as a compact monospace block inside <pre>...</pre> tags — ready to copy and paste, like the weather table. One line per edition. Use · as a separator between columns: start time (HH:MM), channel (ZDF / ARD), show name (heute journal / tagesthemen). Mark an edition that starts within the configured window with a trailing ⏰. Omit editions the tool reports as not scheduled that day. If no edition starts within the window, write one line after the block suggesting to re-watch heute (19:00) in the ZDF Mediathek. Example:
+  7. 📺 "TV news": the coming day's late news editions from the get_tv_news_schedule tool, as a compact monospace block inside <pre>...</pre> tags — ready to copy and paste, like the weather table. One line per edition. Use · as a separator between columns: start time (HH:MM), channel (ZDF / ARD), show name (heute journal / tagesthemen). Mark an edition that starts within the configured window with a trailing ⏰. Omit editions the tool reports as not scheduled that day. If no edition starts within the window, write one line after the block suggesting to re-watch heute (19:00) in the ZDF Mediathek. Example:
      <pre>21:30 · ZDF · heute journal ⏰
      23:30 · ARD · tagesthemen</pre>
-  7. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
+  8. 🔮 End with a single-sentence outlook for the day, based only on the weather forecast.
 - Separate sections with a blank line. You may use a thin separator line (e.g. ───) between major sections if it improves readability.
 - Keep the whole brief under 300 words. Be concise and factual.
 - Only report information the tools actually returned. Never invent news, emails or measurements.
@@ -277,6 +286,9 @@ func buildSourcesDescription(cfg *Config) string {
 	if cfg.Sources.TV.Enabled {
 		ws, we := tvWindowBounds(cfg.Sources.TV.WindowStart, cfg.Sources.TV.WindowEnd)
 		fmt.Fprintf(&sb, "\n- TV news (ARD Das Erste + ZDF): call get_tv_news_schedule to check the coming day's program — whether the late news editions heute-journal (ZDF) or tagesthemen (Das Erste) start within the %s window.", tvWindowLabel(ws, we))
+	}
+	if cfg.Sources.Pets.Enabled {
+		sb.WriteString("\n- Cats (SureFlap cat flap, via the Sure Petcare cloud API): call get_pet_status to see for each cat whether it is inside or outside, and since when the location last changed.")
 	}
 	return sb.String()
 }

@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/PuerkitoBio/goquery v1.13.0
 	github.com/emersion/go-imap v1.2.1
+	github.com/perbu/go-sure v0.0.0-20251129095105-b73bcc0c9aab
 	github.com/sirupsen/logrus v1.9.4
 	gitlab.com/bboehmke/sunny v0.17.0
 	golang.org/x/net v0.60.0

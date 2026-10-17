@@ -16,6 +16,7 @@ func testPromptConfig() *Config {
 	cfg.Sources.Weather.Days = 7
 	cfg.Sources.EV.Enabled = true
 	cfg.Sources.TV.Enabled = true
+	cfg.Sources.Pets.Enabled = true
 	return cfg
 }
 
@@ -32,7 +33,9 @@ func TestDefaultSystemPromptRenders(t *testing.T) {
 		"- Weather: call get_weather_forecast for the 7-day forecast",
 		"- Electric vehicle (VW group, via the EU Data Act portal): call get_ev_status",
 		"- TV news (ARD Das Erste + ZDF): call get_tv_news_schedule",
+		"- Cats (SureFlap cat flap, via the Sure Petcare cloud API): call get_pet_status",
 		`"Car": the user's electric vehicle — battery state of charge, estimated range and charging status`,
+		`"Cats": for each cat, whether it is inside (🏠) or outside (🌳), and since when the location last changed. One line per cat.`,
 		`"Weather": a compact 7-day forecast in a monospace table inside <pre>...</pre> tags`,
 		`"TV news": the coming day's late news editions from the get_tv_news_schedule tool`,
 		"ready to copy and paste, like the weather table",
@@ -97,6 +100,9 @@ func TestSourcesDescriptionReflectsEnabledSources(t *testing.T) {
 	if !strings.Contains(desc, "get_tv_news_schedule") {
 		t.Errorf("enabled TV source missing:\n%s", desc)
 	}
+	if !strings.Contains(desc, "get_pet_status") {
+		t.Errorf("enabled pets source missing:\n%s", desc)
+	}
 
 	cfg.Sources.EV.Enabled = false
 	if desc := buildSourcesDescription(cfg); strings.Contains(desc, "get_ev_status") {
@@ -106,6 +112,11 @@ func TestSourcesDescriptionReflectsEnabledSources(t *testing.T) {
 	cfg.Sources.TV.Enabled = false
 	if desc := buildSourcesDescription(cfg); strings.Contains(desc, "get_tv_news_schedule") {
 		t.Errorf("disabled TV should not be listed:\n%s", desc)
+	}
+
+	cfg.Sources.Pets.Enabled = false
+	if desc := buildSourcesDescription(cfg); strings.Contains(desc, "get_pet_status") {
+		t.Errorf("disabled pets should not be listed:\n%s", desc)
 	}
 }
 

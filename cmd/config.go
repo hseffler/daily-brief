@@ -86,6 +86,11 @@ type Config struct {
 			ZDFURL         string `yaml:"zdf_url"`     // only override for proxies/tests
 			ZDFAPIKey      string `yaml:"zdf_api_key"` // only override; default is ZDF's public web-player token
 		} `yaml:"tv"`
+		Pets struct {
+			Enabled  bool   `yaml:"enabled"`
+			Email    string `yaml:"email"`
+			Password string `yaml:"password"`
+		} `yaml:"pets"`
 	} `yaml:"sources"`
 
 	Telegram struct {
@@ -183,8 +188,8 @@ func (c *Config) validate() error {
 	if c.Telegram.Token == "" || c.Telegram.ChatID == "" {
 		return fmt.Errorf("telegram.token and telegram.chat_id are required (the brief is delivered via Telegram)")
 	}
-	if len(c.Sources.Web) == 0 && !c.Sources.Email.Enabled && !c.Sources.SMA.Enabled && !c.Sources.Weather.Enabled && !c.Sources.EV.Enabled && !c.Sources.TV.Enabled {
-		return fmt.Errorf("no sources enabled: configure at least one of sources.web, sources.email, sources.sma, sources.weather, sources.ev or sources.tv")
+	if len(c.Sources.Web) == 0 && !c.Sources.Email.Enabled && !c.Sources.SMA.Enabled && !c.Sources.Weather.Enabled && !c.Sources.EV.Enabled && !c.Sources.TV.Enabled && !c.Sources.Pets.Enabled {
+		return fmt.Errorf("no sources enabled: configure at least one of sources.web, sources.email, sources.sma, sources.weather, sources.ev, sources.tv or sources.pets")
 	}
 	for i, w := range c.Sources.Web {
 		if w.Name == "" || w.URL == "" {
@@ -202,6 +207,11 @@ func (c *Config) validate() error {
 		}
 		if !vwBrandKnown(c.Sources.EV.Brand) {
 			return fmt.Errorf("sources.ev: unknown brand %q (supported: Volkswagen, Audi, Skoda, Seat, Cupra)", c.Sources.EV.Brand)
+		}
+	}
+	if c.Sources.Pets.Enabled {
+		if c.Sources.Pets.Email == "" || c.Sources.Pets.Password == "" {
+			return fmt.Errorf("sources.pets: email and password are required (your Sure Petcare account credentials)")
 		}
 	}
 	// sources.sma needs no required fields: with neither host nor serial the

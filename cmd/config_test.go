@@ -24,8 +24,8 @@ func TestReadConfigExample(t *testing.T) {
 	if len(cfg.Sources.Web) != 4 {
 		t.Errorf("expected 4 web sources, got %d", len(cfg.Sources.Web))
 	}
-	if !cfg.Sources.Email.Enabled || !cfg.Sources.SMA.Enabled || !cfg.Sources.EV.Enabled || !cfg.Sources.TV.Enabled {
-		t.Errorf("expected email, SMA, EV and TV to be enabled in the example")
+	if !cfg.Sources.Email.Enabled || !cfg.Sources.SMA.Enabled || !cfg.Sources.EV.Enabled || !cfg.Sources.TV.Enabled || !cfg.Sources.Pets.Enabled {
+		t.Errorf("expected email, SMA, EV, TV and pets to be enabled in the example")
 	}
 }
 
@@ -172,6 +172,16 @@ sources:
 			wantErr: "password",
 		},
 		{
+			name: "pets without password",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  pets: {enabled: true, email: "you@example.com"}
+`,
+			wantErr: "password",
+		},
+		{
 			name: "ev unknown brand",
 			content: `
 mistral: {api_key: "k"}
@@ -272,5 +282,18 @@ sources:
 `)
 	if _, err := readConfig(path); err != nil {
 		t.Fatalf("tv as the only source should validate: %v", err)
+	}
+}
+
+func TestReadConfigPetsOnlySource(t *testing.T) {
+	// sources.pets with credentials can be the only source.
+	path := writeTempConfig(t, `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  pets: {enabled: true, email: "you@example.com", password: "p"}
+`)
+	if _, err := readConfig(path); err != nil {
+		t.Fatalf("pets as the only source should validate: %v", err)
 	}
 }

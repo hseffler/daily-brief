@@ -26,6 +26,8 @@ systemd timer. Project layout follows hostmonitor conventions.
 │   ├── tool_ev.go         # get_ev_status tool
 │   ├── tv.go              # ARD/ZDF program API client (heute-journal/tagesthemen check)
 │   ├── tool_tv.go         # get_tv_news_schedule tool
+│   ├── sureflap.go        # gosure library adapter (cat flap, inside/outside)
+│   ├── tool_pets.go       # get_pet_status tool
 │   ├── telegram.go        # Telegram delivery (chunked, 429 backoff)
 │   └── *_test.go          # Unit/integration tests (httptest + fakes)
 ├── Makefile               # Build automation (overridable GOOS/GOARCH, root guards)
@@ -148,6 +150,20 @@ systemd timer. Project layout follows hostmonitor conventions.
   priority as evcc). Range (ID.3 GUID `0ca40e18-...`), charge status (evcc's
   StatusA/B/C mapping) and odometer come from the same dataset. The tool
   output always states the age of the data.
+- **Pets** (`get_pet_status`): **SureFlap cat flap (Connect line: Cat Flap
+  Connect + Sure Petcare Hub)** via the **Sure Petcare cloud API**, using the
+  [gosure](https://github.com/perbu/go-sure) Go library (BSD-3-Clause).
+  Sure Petcare publishes no official developer API; the library logs in with
+  the account credentials (`POST /api/auth/login` → bearer token) and reads
+  `GET /api/pet?with[]=photo&with[]=position&with[]=status` — each pet's
+  `position.where` (1 = inside, 2 = outside) and `position.since` (when it
+  last changed). The client is wrapped behind the `petFetcher` interface
+  (fakes in tests). The location is tracked by the flap (every passage
+  updates it; it can be overridden manually in the app) — a cat that goes
+  through a window or door is not accounted for. Library quirks: no context
+  support (a fixed 30s HTTP timeout bounds the call), no re-login on an
+  expired token, and a new random device id per client (each run registers a
+  new device on the account, visible in the app).
 
 ### 3. Delivery
 - Brief printed to stdout and sent to Telegram (bot API `sendMessage` with
@@ -178,6 +194,7 @@ systemd timer. Project layout follows hostmonitor conventions.
   (sorted into 🏛️ Politics, 💶 Economy, ⚽ Sports, 🎭 Culture categories,
   deduplicated across sources — same story reported once), 📧 Emails,
   ☀️ PV system (⚡/🔋), 🚗 Car (🔋, with a note when the data is hours old),
+  🐱 Cats (🏠/🌳, with the time the location last changed),
   🌤️ Weather (7-day monospace table inside `<pre>` tags, one line per day
   with weather emoji, temperature, precipitation and sunshine hours), 📺 TV
   news (copy-pasteable monospace `<pre>` block, one line per late-news
@@ -206,6 +223,8 @@ systemd timer. Project layout follows hostmonitor conventions.
 - `github.com/PuerkitoBio/goquery` v1.13.0 — HTML parsing/extraction (direct)
 - `gitlab.com/bboehmke/sunny` v0.17.0 — SMA Speedwire protocol (direct; the
   same library evcc uses)
+- `github.com/perbu/go-sure` v0.0.0-20251129095105-b73bcc0c9aab — Sure Petcare
+  API client library, gosure (direct; BSD-3-Clause)
 - `golang.org/x/net` — direct (charset handling via goquery; publicsuffix for
   the VW portal cookie jar)
 - Mistral API, Telegram Bot API: plain `net/http`, no SDKs
@@ -219,7 +238,8 @@ systemd timer. Project layout follows hostmonitor conventions.
   - `EmailFetcher` interface → fake fetcher for tool/state/dedupe tests.
   - `httptest.Server` for Mistral request shape, SMA Webconnect flow (login,
     getValues parsing, 401 re-login, error mapping), Telegram chunking/429,
-    web-page extraction (HTML articles + RSS feeds), weather API parsing, and
+    web-page extraction (HTML articles + RSS feeds), weather API parsing, the
+    gosure→petStatus mapping (inside/outside, missing position/since), and
     the ARD/ZDF program APIs (response shapes, nested timeSlots, pagination,
     request headers, window/scope filtering, per-source failure handling).
   - `httptest` TLS servers fake the VW identity service and the EU Data Act
@@ -230,6 +250,9 @@ systemd timer. Project layout follows hostmonitor conventions.
     `go test -tags live -run TestLiveTVReadout ./cmd` does a manual readout
     against the real ARD/ZDF program APIs (prints the raw evening entries and
     the formatted `get_tv_news_schedule` output; needs no credentials).
+    `go test -tags live -run TestLivePetsReadout ./cmd` does a manual readout
+    against the real Sure Petcare API (reads `sources.pets` from the config;
+    prints the raw pet locations and the formatted `get_pet_status` output).
 - `Content` type is tested for both wire formats (string and array of parts),
   including a regression test for array content in Mistral responses.
 - `emailSnippet` is tested against raw MIME fixtures (plain, multipart
@@ -304,6 +327,15 @@ When making changes to the codebase:
    window, not by dedupe state. A delayed run (systemd catch-up after
    downtime) or a manual second run repeats mails from the window, and
    mails from a failed run's window are not re-briefed.
+8. **Pets (SureFlap)**: the Sure Petcare cloud API is unofficial and
+   reverse-engineered — it may change or break without notice (a `position`
+   outage in late 2024 was fixed by Sure Petcare, but there is no stability
+   guarantee). The inside/outside state reflects flap passages and manual
+   overrides only. Connect line only (Cat Flap Connect + Sure Petcare Hub);
+   newer products (SureFlap EVO and friends) may use a different API. The
+   gosure library decodes `position.since` as an RFC 3339 `time.Time` — a
+   non-RFC 3339 timestamp (e.g. a zone-less one from a manual override set
+   through an API client) would fail the whole pets request.
 
 ## Future Enhancements
 
@@ -315,7 +347,7 @@ When making changes to the codebase:
 ## Project Status
 
 **Current**: Feature-complete for the requested sources, tests green
-**Version**: 1.1.0
+**Version**: 1.2.0
 
 ---
 

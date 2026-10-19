@@ -23,6 +23,13 @@ const (
 	telegramMaxMessageLen = 4096
 	// telegramChunkLen is the target chunk size, kept below the limit.
 	telegramChunkLen = 4000
+	// tagSlackRunes is how far past maxLen a chunk may grow to keep an HTML
+	// tag whole. It bounds the damage of an unclosed tag (e.g. a stray "<b"
+	// with no ">"): without it the chunk could grow past telegramMaxMessageLen
+	// and Telegram would reject it as too long. 50 runes is generous for any
+	// legitimate tag (<pre>, </pre>, <b>, etc.) and keeps the worst-case chunk
+	// at maxLen+50 = 4050, still under the 4096 hard limit.
+	tagSlackRunes = 50
 )
 
 // TelegramSender delivers the brief to a Telegram chat, in the same style as
@@ -80,12 +87,15 @@ func (t *TelegramSender) Send(ctx context.Context, text string) error {
 	return nil
 }
 
-// splitTelegram splits text into chunks of at most maxLen runes. It prefers
-// to break at a newline; if none is found in the first half of the window it
-// breaks at the hard limit. Chunking is rune-based so multi-byte characters
-// are never split, and it never breaks inside an HTML tag (<...>), so chunks
-// stay well-formed when sent with parse_mode=HTML. A tag straddling the limit
-// is kept whole, which can push that chunk a few runes past maxLen.
+// splitTelegram splits text into chunks of at most maxLen runes (plus a small
+// slack for HTML tags, see tagSlackRunes). It prefers to break at a newline;
+// if none is found in the first half of the window it breaks at the hard
+// limit. Chunking is rune-based so multi-byte characters are never split,
+// and it never breaks inside an HTML tag (<...>), so chunks stay well-formed
+// when sent with parse_mode=HTML. A tag straddling the limit is kept whole,
+// which can push that chunk a few runes past maxLen — but never past
+// maxLen+tagSlackRunes, so even an unclosed tag cannot produce a chunk
+// exceeding Telegram's hard limit.
 func splitTelegram(text string, maxLen int) []string {
 	runes := []rune(text)
 	if len(runes) <= maxLen {
@@ -108,7 +118,10 @@ func splitTelegram(text string, maxLen int) []string {
 		if r == '>' {
 			inTag = false
 		}
-		if i-start < maxLen || inTag {
+		// Cut when we've reached maxLen. Inside a tag, allow up to
+		// maxLen+tagSlackRunes so legitimate tags stay whole; past that,
+		// cut anyway so an unclosed tag cannot grow the chunk unboundedly.
+		if i-start < maxLen || (inTag && i-start < maxLen+tagSlackRunes) {
 			continue
 		}
 		cut := i

@@ -110,7 +110,7 @@ func (c *Config) setDefaults() {
 		c.Mistral.Model = "mistral-large-4"
 	}
 	if c.Mistral.BaseURL == "" {
-		c.Mistral.BaseURL = "https://api.mistral.ai/v1"
+		c.Mistral.BaseURL = defaultMistralBaseURL
 	}
 	if c.Mistral.Temperature == 0 {
 		c.Mistral.Temperature = 0.3
@@ -143,7 +143,7 @@ func (c *Config) setDefaults() {
 		c.Sources.SMA.TimeoutSeconds = 30
 	}
 	if c.Sources.Weather.URL == "" {
-		c.Sources.Weather.URL = "https://api.open-meteo.com/v1/forecast"
+		c.Sources.Weather.URL = defaultWeatherURL
 	}
 	if c.Sources.Weather.Days == 0 {
 		c.Sources.Weather.Days = 7

@@ -2,7 +2,7 @@
 
 # Build variables
 BINARY_NAME := daily-brief
-VERSION := 1.1.0
+VERSION := 1.2.0
 BUILD_DIR := build
 EXAMPLE_CONFIG_FILE := daily-brief.yaml.example
 

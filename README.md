@@ -253,12 +253,15 @@ the window:
 If nothing starts inside the window, a line after the block suggests
 re-watching **heute** (19:00) in the ZDF Mediathek. Overnight repeats of the
 previous evening (e.g. the ~00:20 heute journal repeat) are ignored — the
-tool checks the day's own program from 06:00 on.
+tool checks the day's own program from 06:00 on. The short late-night bulletin
+**heute journal update** (aired on some days, e.g. Mondays at 23:50) is a
+different program and is not reported as heute journal.
 
 ### RSS feeds as news sources
 
-The `fetch_webpage` tool automatically detects RSS/Atom feeds (by the presence
-of `<item>` elements) and extracts the headlines as a simple bullet list.
+The `fetch_webpage` tool automatically detects RSS feeds (by the presence
+of `<item>` elements) and Atom feeds (by `<entry>` elements) and extracts
+the headlines as a simple bullet list.
 This is the recommended way to read news sites that block scrapers:
 
 | Site | Main page | RSS feed (use this) |

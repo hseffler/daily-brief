@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestFetchWebpageExtractsArticles(t *testing.T) {
@@ -155,5 +156,61 @@ func TestFetchWebpageExtractsRSSFeed(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("output should not contain %q:\n%s", unwanted, out)
 		}
+	}
+}
+
+func TestFetchWebpageExtractsAtomFeed(t *testing.T) {
+	atom := `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example News</title>
+  <entry>
+    <title>Atom Headline One</title>
+    <link href="https://example.com/1"/>
+  </entry>
+  <entry>
+    <title>Atom Headline Two</title>
+    <link href="https://example.com/2"/>
+  </entry>
+</feed>`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
+		w.Write([]byte(atom))
+	}))
+	defer srv.Close()
+
+	out, err := fetchWebpage(context.Background(), srv.Client(), srv.URL, 8000, testLogger())
+	if err != nil {
+		t.Fatalf("fetchWebpage: %v", err)
+	}
+
+	for _, want := range []string{"- Atom Headline One", "- Atom Headline Two"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestFetchWebpageTruncationIsRuneSafe(t *testing.T) {
+	// Multi-byte characters at the truncation boundary must not be split.
+	// 100 × "ä" (2 bytes each) = 200 bytes; truncating at 150 bytes would
+	// split the 75th "ä" if done byte-wise.
+	longText := strings.Repeat("ä", 500) // 1000 bytes, 500 runes
+	html := `<html><head><title>T</title></head><body><article><h2>H</h2><p>` + longText + `</p></article></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(html))
+	}))
+	defer srv.Close()
+
+	// maxChars=100 runes: the cut must fall on a rune boundary.
+	out, err := fetchWebpage(context.Background(), srv.Client(), srv.URL, 100, testLogger())
+	if err != nil {
+		t.Fatalf("fetchWebpage: %v", err)
+	}
+	if !utf8.ValidString(out) {
+		t.Error("output is not valid UTF-8 — truncation split a multi-byte character")
+	}
+	if !strings.Contains(out, "... (truncated)") {
+		t.Error("expected truncation marker")
 	}
 }

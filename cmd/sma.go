@@ -61,7 +61,10 @@ type SMASpeedwireClient struct {
 	timeout  time.Duration
 	logger   *logrus.Logger
 
-	conn   *sunny.Connection
+	// device is the connected SMA device, cached after the first successful
+	// connect. The sunny library manages the UDP connection lifecycle
+	// internally (NewConnection is a singleton per interface with no Close
+	// method), so only the device needs to be held here.
 	device *sunny.Device
 }
 
@@ -127,7 +130,6 @@ func (c *SMASpeedwireClient) connect() (*sunny.Device, error) {
 	if err != nil {
 		return nil, fmt.Errorf("SMA Speedwire: cannot open connection (interface %q): %w", c.iface, err)
 	}
-	c.conn = conn
 
 	if c.host != "" {
 		dev, err := conn.NewDevice(c.host, c.password)

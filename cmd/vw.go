@@ -347,8 +347,16 @@ func (c *vwPortalClient) login(ctx context.Context) error {
 	c.loginMu.Lock()
 	defer c.loginMu.Unlock()
 
-	portalHost := strings.TrimPrefix(c.portalURL, "https://")
-	identityHost := strings.TrimPrefix(c.identityURL, "https://")
+	portalURL, err := url.Parse(c.portalURL)
+	if err != nil {
+		return fmt.Errorf("invalid portal URL %q: %w", c.portalURL, err)
+	}
+	identityURL, err := url.Parse(c.identityURL)
+	if err != nil {
+		return fmt.Errorf("invalid identity URL %q: %w", c.identityURL, err)
+	}
+	portalHost := portalURL.Host
+	identityHost := identityURL.Host
 
 	// Private client copy for the login redirect chain: cookies land in the
 	// shared jar; redirects are restricted to the identity and portal hosts

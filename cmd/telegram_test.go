@@ -291,3 +291,25 @@ func TestTelegramSendFallsBackToPlainTextOnParseError(t *testing.T) {
 		t.Errorf("fallback text: got %q, want %q", got[1].Get("text"), want)
 	}
 }
+
+func TestSplitTelegramUnclosedTagIsBounded(t *testing.T) {
+	// An unclosed tag (e.g. a stray "<b" with no ">") must not grow a chunk
+	// past maxLen+tagSlackRunes. Without the slack bound the chunk would grow
+	// unboundedly and Telegram would reject it as too long.
+	text := strings.Repeat("a", 3999) + "<b" + strings.Repeat("x", 500)
+	chunks := splitTelegram(text, 4000)
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+	for i, c := range chunks {
+		if len([]rune(c)) > 4000+tagSlackRunes {
+			t.Errorf("chunk %d exceeds maxLen+tagSlackRunes: %d runes", i, len([]rune(c)))
+		}
+		if len([]rune(c)) > telegramMaxMessageLen {
+			t.Errorf("chunk %d exceeds Telegram hard limit: %d runes", i, len([]rune(c)))
+		}
+	}
+	if strings.Join(chunks, "") != text {
+		t.Error("chunks should reassemble the original text")
+	}
+}

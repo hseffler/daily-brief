@@ -61,10 +61,11 @@ systemd timer. Project layout follows hostmonitor conventions.
 - **Web** (`fetch_webpage`): HTTP GET with a browser User-Agent, charset
   transcoding (`x/net/html/charset`), HTML→readable text via goquery (drops
   script/style/nav/footer/..., keeps `<article>` headings+teasers, capped at
-  `web_fetch.max_chars`, default 8000). **RSS/Atom feeds** are detected by the
-  presence of `<item>` elements and rendered as a simple bullet list of
-  headlines (`- Title`). This is how zeit.de (bot-protected on the main site),
-  taz and WELT are read — via their RSS feeds on separate domains.
+  `web_fetch.max_chars`, default 8000). **RSS feeds** (detected by `<item>`
+  elements) and **Atom feeds** (detected by `<entry>` elements) are rendered
+  as a simple bullet list of headlines (`- Title`). This is how zeit.de
+  (bot-protected on the main site), taz and WELT are read — via their RSS
+  feeds on separate domains.
 - **Weather** (`get_weather_forecast`): Open-Meteo forecast API (free, no API
   key; uses DWD ICON models for Central Europe). Returns per-day: WMO weather
   code mapped to text, min/max temperature, precipitation amount and
@@ -118,9 +119,12 @@ systemd timer. Project layout follows hostmonitor conventions.
   (`sources.tv.window_start`/`window_end`, default 21:15–21:30, inclusive).
   Editions starting before 06:00 are ignored — the small hours carry overnight
   repeats of the previous evening (e.g. the ~00:20 heute journal repeat),
-  which belong to the previous program day. A failing source does not lose the
-  other; the output carries per-source error lines, and the tool only fails
-  when both sources fail. The brief section renders the editions as a compact
+  which belong to the previous program day. The short late-night bulletin
+  "heute journal update" (aired on some days, e.g. Mondays at 23:50) is a
+  different program and is not matched as heute journal. A failing source does
+  not lose the other; the output carries per-source error lines, and the tool
+  only fails when both sources fail. The brief section renders the editions as
+  a compact
   monospace `<pre>` block (ready to copy and paste, like the weather table),
   one line per edition: start time · channel · show, with a trailing ⏰ on
   the edition inside the window; when nothing is in the slot, a line after
@@ -318,16 +322,18 @@ When making changes to the codebase:
    mandatory. VW group brands only (VW, Audi, Skoda, Seat, Cupra).
 7. **TV schedule scope**: `get_tv_news_schedule` checks the current day's own
    program (from 06:00 local in `sources.tv.timezone`); overnight repeats of
-   the previous evening are ignored. The ZDF API is authenticated with the
-   public token from ZDF's own web player (`sources.tv.zdf_api_key` overrides
-   it if it ever rotates); the ARD program API serves at most 8 days ahead.
-   Neither API is documented officially — both are the same endpoints the
-   broadcasters' own web frontends use.
-7. **Email is stateless**: mails are matched by a rolling `since_hours`
+   the previous evening (before 06:00) are ignored, and the short late-night
+   bulletin "heute journal update" is not matched as heute journal. The ZDF
+   API is authenticated with the public token from ZDF's own web player
+   (`sources.tv.zdf_api_key` overrides it if it ever rotates); the ARD
+   program API serves at most 8 days ahead. Neither API is documented
+   officially — both are the same endpoints the broadcasters' own web
+   frontends use.
+8. **Email is stateless**: mails are matched by a rolling `since_hours`
    window, not by dedupe state. A delayed run (systemd catch-up after
    downtime) or a manual second run repeats mails from the window, and
    mails from a failed run's window are not re-briefed.
-8. **Pets (SureFlap)**: the Sure Petcare cloud API is unofficial and
+9. **Pets (SureFlap)**: the Sure Petcare cloud API is unofficial and
    reverse-engineered — it may change or break without notice (a `position`
    outage in late 2024 was fixed by Sure Petcare, but there is no stability
    guarantee). The inside/outside state reflects flap passages and manual

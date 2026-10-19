@@ -214,12 +214,16 @@ func normalizeTitle(s string) string {
 
 // matchLateNews reports whether a program title is one of the late news
 // editions we check, and returns its normalized show name.
+//
+// "heute journal update" (a short late-night news bulletin ZDF airs on some
+// days, e.g. Mondays at 23:50) is explicitly excluded — it is a different
+// program, not the main heute journal magazine.
 func matchLateNews(title string) (string, bool) {
 	n := normalizeTitle(title)
 	switch {
 	case strings.Contains(n, "tagesthemen"):
 		return "tagesthemen", true
-	case strings.Contains(n, "heute journal"):
+	case strings.Contains(n, "heute journal") && !strings.Contains(n, "heute journal update"):
 		return "heute journal", true
 	}
 	return "", false

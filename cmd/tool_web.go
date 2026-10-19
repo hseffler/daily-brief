@@ -97,8 +97,8 @@ func fetchWebpage(ctx context.Context, client *http.Client, rawurl string, maxCh
 
 	title := collapseSpace(doc.Find("title").First().Text())
 	text := extractReadableText(doc)
-	if len(text) > maxChars {
-		text = text[:maxChars] + "\n... (truncated)"
+	if cut, truncated := truncateRunes(text, maxChars); truncated {
+		text = cut + "\n... (truncated)"
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -112,15 +112,18 @@ func fetchWebpage(ctx context.Context, client *http.Client, rawurl string, maxCh
 
 // extractReadableText pulls the meaningful text out of a parsed HTML document:
 // it drops boilerplate elements and, on front pages with many <article>
-// teasers, keeps each article's heading plus text. RSS/XML feeds (detected by
-// the presence of <item> elements) are rendered as a simple headline list.
+// teasers, keeps each article's heading plus text. RSS feeds (detected by
+// <item> elements) and Atom feeds (detected by <entry> elements) are
+// rendered as a simple headline list.
 func extractReadableText(doc *goquery.Document) string {
 	doc.Find("script, style, noscript, template, svg, nav, footer, aside, form, button, iframe, header").Remove()
 
-	// RSS/Atom feed: each <item> becomes one headline line.
-	if items := doc.Find("item"); items.Length() > 0 {
+	// RSS feed: each <item> becomes one headline line.
+	// Atom feed: each <entry> becomes one headline line.
+	feedItems := doc.Find("item, entry")
+	if feedItems.Length() > 0 {
 		var sb strings.Builder
-		items.EachWithBreak(func(i int, s *goquery.Selection) bool {
+		feedItems.EachWithBreak(func(i int, s *goquery.Selection) bool {
 			if i >= webFetchMaxArticles {
 				return false
 			}

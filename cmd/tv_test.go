@@ -41,13 +41,15 @@ const cannedARDProgram = `{"channels":[
 // (must be filtered out), the 19:00 heute main edition and heute Xpress
 // (neither matches), a heute journal at 21:15 (inside the default window, via
 // the airtimeBegin fallback), a "heute-journal" (hyphenated) at 21:45
-// (outside), and an entry for the next day (must be filtered out).
+// (outside), a "heute journal update" at 23:50 (a different program — must
+// NOT match), and an entry for the next day (must be filtered out).
 const cannedZDFBroadcasts = `{"http://zdf.de/rels/cmdm/broadcasts":[
 	{"effectiveAirtimeBegin":"2026-10-17T00:20:00+02:00","effectiveAirtimeEnd":"2026-10-17T00:40:00+02:00","title":"heute journal","subtitle":"overnight repeat"},
 	{"effectiveAirtimeBegin":"2026-10-17T19:00:00+02:00","effectiveAirtimeEnd":"2026-10-17T19:20:00+02:00","title":"heute","subtitle":""},
 	{"effectiveAirtimeBegin":"2026-10-17T19:30:00+02:00","effectiveAirtimeEnd":"2026-10-17T19:35:00+02:00","title":"heute Xpress","subtitle":""},
 	{"airtimeBegin":"2026-10-17T21:15:00+02:00","airtimeEnd":"2026-10-17T21:45:00+02:00","title":"heute journal","subtitle":""},
 	{"effectiveAirtimeBegin":"2026-10-17T21:45:00+02:00","effectiveAirtimeEnd":"2026-10-17T22:00:00+02:00","title":"heute-journal","subtitle":""},
+	{"effectiveAirtimeBegin":"2026-10-17T23:50:00+02:00","effectiveAirtimeEnd":"2026-10-18T00:05:00+02:00","title":"heute journal update","subtitle":""},
 	{"effectiveAirtimeBegin":"2026-10-18T21:30:00+02:00","effectiveAirtimeEnd":"2026-10-18T21:45:00+02:00","title":"heute journal","subtitle":"next day"}
 ]}`
 
@@ -92,6 +94,14 @@ func TestTVLateNewsEditions(t *testing.T) {
 	}
 	if len(editions) != 4 {
 		t.Fatalf("expected 4 editions, got %d: %+v", len(editions), editions)
+	}
+
+	// The "heute journal update" at 23:50 (a different program) must NOT
+	// appear — only the two real heute journal editions (21:15, 21:45).
+	for _, e := range editions {
+		if e.Show == "heute journal" && e.Start.Format("15:04") == "23:50" {
+			t.Errorf("heute journal update must not match: got edition at %s", e.Start.Format("15:04"))
+		}
 	}
 
 	// Sorted by start time: 21:14 tagesthemen (out), 21:15 heute journal (in),
@@ -499,4 +509,31 @@ func ExampleformatTVNewsSchedule() {
 	// - ZDF heute journal: 21:30–21:45 — INSIDE the 21:15–21:30 window
 	// - ARD (Das Erste) tagesthemen: 22:15–22:45 — outside the 21:15–21:30 window
 	// Verdict: heute journal (ZDF) at 21:30 starts within the 21:15–21:30 window.
+}
+
+func TestTVMatchLateNewsExcludesUpdate(t *testing.T) {
+	// "heute journal update" is a short late-night news bulletin (aired by
+	// ZDF on some days, e.g. Mondays at 23:50), not the main heute journal
+	// magazine. It must NOT match — otherwise the brief shows a phantom
+	// second "heute journal" entry.
+	for _, tc := range []struct {
+		title string
+		match bool
+	}{
+		{"heute journal", true},
+		{"heute journal Wetter", true},  // subtitle concatenated
+		{"Heute-Journal", true},         // hyphenated, capitalized
+		{"heute journal update", false}, // different program — excluded
+		{"heute journal Update", false}, // case-insensitive exclusion
+		{"heute journal UPDATE", false}, // case-insensitive exclusion
+		{"heute Xpress", false},
+		{"heute", false},
+		{"heute - in Deutschland", false},
+		{"heute - in Europa", false},
+	} {
+		_, match := matchLateNews(tc.title)
+		if match != tc.match {
+			t.Errorf("matchLateNews(%q): got %v, want %v", tc.title, match, tc.match)
+		}
+	}
 }

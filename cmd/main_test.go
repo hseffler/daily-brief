@@ -40,7 +40,7 @@ func TestDefaultSystemPromptRenders(t *testing.T) {
 		`"TV news": the coming day's late news editions from the get_tv_news_schedule tool`,
 		"ready to copy and paste, like the weather table",
 		"Mark an edition that starts within the configured window with a trailing ⏰",
-		"21:30 · ZDF · heute journal ⏰",
+		"21:30–22:00 · ZDF · heute journal ⏰",
 		"suggesting to re-watch heute (19:00) in the ZDF Mediathek",
 	} {
 		if !strings.Contains(sp, want) {

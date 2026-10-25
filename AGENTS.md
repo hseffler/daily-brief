@@ -126,7 +126,7 @@ systemd timer. Project layout follows hostmonitor conventions.
   only fails when both sources fail. The brief section renders the editions as
   a compact
   monospace `<pre>` block (ready to copy and paste, like the weather table),
-  one line per edition: start time · channel · show, with a trailing ⏰ on
+  one line per edition: start–end time · channel · show, with a trailing ⏰ on
   the edition inside the window; when nothing is in the slot, a line after
   the block suggests re-watching **heute (19:00)** in the ZDF Mediathek.
 - **EV** (`get_ev_status`): **VW group vehicles (ID.3, e-Golf, e-Up, Audi,
@@ -202,7 +202,7 @@ systemd timer. Project layout follows hostmonitor conventions.
   🌤️ Weather (7-day monospace table inside `<pre>` tags, one line per day
   with weather emoji, temperature, precipitation and sunshine hours), 📺 TV
   news (copy-pasteable monospace `<pre>` block, one line per late-news
-  edition: start time · channel · show, trailing ⏰ on the edition inside the
+  edition: start–end time · channel · show, trailing ⏰ on the edition inside the
   configured window; a heute 19:00 re-watch tip line after the block when
   nothing is in the slot), 🔮 outlook.
 - **Mistral Content type**: newer Mistral models return `content` as an array

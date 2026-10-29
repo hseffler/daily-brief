@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -27,8 +28,8 @@ func TestSplitTelegram(t *testing.T) {
 			t.Fatalf("expected 3 chunks, got %d", len(chunks))
 		}
 		for i, c := range chunks {
-			if len([]rune(c)) > 4000 {
-				t.Errorf("chunk %d too long: %d runes", i, len([]rune(c)))
+			if utf16Len(c) > 4000 {
+				t.Errorf("chunk %d too long: %d UTF-16 units", i, utf16Len(c))
 			}
 		}
 		if strings.Join(chunks, "") != text {
@@ -43,21 +44,43 @@ func TestSplitTelegram(t *testing.T) {
 			t.Fatalf("expected >= 3 chunks, got %d", len(chunks))
 		}
 		for _, c := range chunks {
-			if len([]rune(c)) > 4000 {
-				t.Errorf("chunk too long: %d runes", len([]rune(c)))
+			if utf16Len(c) > 4000 {
+				t.Errorf("chunk too long: %d UTF-16 units", utf16Len(c))
 			}
 		}
 	})
 
 	t.Run("unicode is not split mid-rune", func(t *testing.T) {
-		text := strings.Repeat("ä", 5000) // 2 bytes per rune
+		text := strings.Repeat("ä", 5000) // 2 bytes per rune, 1 UTF-16 unit
 		chunks := splitTelegram(text, 4000)
 		for i, c := range chunks {
 			if !utf8.ValidString(c) {
 				t.Errorf("chunk %d is not valid UTF-8", i)
 			}
-			if len([]rune(c)) > 4000 {
-				t.Errorf("chunk %d too long: %d runes", i, len([]rune(c)))
+			if utf16Len(c) > 4000 {
+				t.Errorf("chunk %d too long: %d UTF-16 units", i, utf16Len(c))
+			}
+		}
+		if strings.Join(chunks, "") != text {
+			t.Error("chunks should reassemble the original text")
+		}
+	})
+
+	t.Run("emoji-heavy text is split by UTF-16 units, not runes", func(t *testing.T) {
+		// 🔋 is astral: 1 rune but 2 UTF-16 units. Telegram's 4096 limit is
+		// counted in UTF-16 units, so 3000 emoji = 6000 units must split into
+		// 2 chunks even though each chunk has only 2000 runes.
+		text := strings.Repeat("🔋", 3000)
+		chunks := splitTelegram(text, 4000)
+		if len(chunks) != 2 {
+			t.Fatalf("expected 2 chunks, got %d", len(chunks))
+		}
+		for i, c := range chunks {
+			if utf16Len(c) > telegramMaxMessageLen {
+				t.Errorf("chunk %d exceeds Telegram's hard limit: %d UTF-16 units", i, utf16Len(c))
+			}
+			if !utf8.ValidString(c) {
+				t.Errorf("chunk %d is not valid UTF-8", i)
 			}
 		}
 		if strings.Join(chunks, "") != text {
@@ -119,8 +142,8 @@ func TestTelegramSendChunks(t *testing.T) {
 		t.Fatalf("expected 3 messages, got %d", len(rec.texts))
 	}
 	for i, txt := range rec.texts {
-		if len([]rune(txt)) > telegramMaxMessageLen {
-			t.Errorf("message %d exceeds Telegram limit: %d runes", i, len([]rune(txt)))
+		if utf16Len(txt) > telegramMaxMessageLen {
+			t.Errorf("message %d exceeds Telegram limit: %d UTF-16 units", i, utf16Len(txt))
 		}
 	}
 	if rec.chatID != "chat42" {
@@ -161,6 +184,7 @@ func TestTelegramSendError(t *testing.T) {
 
 	sender := NewTelegramSender("tok", "chat42", srv.Client(), testLogger())
 	sender.apiURL = srv.URL
+	sender.backoffBase = time.Millisecond
 
 	err := sender.Send(context.Background(), "hello")
 	if err == nil {
@@ -171,10 +195,41 @@ func TestTelegramSendError(t *testing.T) {
 	}
 }
 
+func TestTelegramSendRetriesOn5xx(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		n := requests
+		mu.Unlock()
+		if n <= 2 {
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(`{"ok":false,"description":"Bad Gateway"}`))
+			return
+		}
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	sender := NewTelegramSender("tok", "chat42", srv.Client(), testLogger())
+	sender.apiURL = srv.URL
+	sender.backoffBase = time.Millisecond
+
+	if err := sender.Send(context.Background(), "hello"); err != nil {
+		t.Fatalf("Send should succeed after 5xx retries: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 3 {
+		t.Errorf("expected 3 requests (2 failures + 1 success), got %d", requests)
+	}
+}
+
 func TestSplitTelegramExampleSizedInput(t *testing.T) {
 	chunks := splitTelegram(strings.Repeat("ab", 3000), 4000)
-	if len(chunks) != 2 || len([]rune(chunks[0])) != 4000 {
-		t.Errorf("got %d chunks of %d runes", len(chunks), len([]rune(chunks[0])))
+	if len(chunks) != 2 || utf16Len(chunks[0]) != 4000 {
+		t.Errorf("got %d chunks of %d UTF-16 units", len(chunks), utf16Len(chunks[0]))
 	}
 }
 
@@ -216,8 +271,8 @@ func TestSplitTelegramKeepsTagsWhole(t *testing.T) {
 			t.Error("chunks should reassemble the original text")
 		}
 		for i, c := range chunks {
-			if len([]rune(c)) > 4000 {
-				t.Errorf("chunk %d too long: %d runes", i, len([]rune(c)))
+			if utf16Len(c) > 4000 {
+				t.Errorf("chunk %d too long: %d UTF-16 units", i, utf16Len(c))
 			}
 		}
 	})
@@ -294,7 +349,7 @@ func TestTelegramSendFallsBackToPlainTextOnParseError(t *testing.T) {
 
 func TestSplitTelegramUnclosedTagIsBounded(t *testing.T) {
 	// An unclosed tag (e.g. a stray "<b" with no ">") must not grow a chunk
-	// past maxLen+tagSlackRunes. Without the slack bound the chunk would grow
+	// past maxLen+tagSlackUnits. Without the slack bound the chunk would grow
 	// unboundedly and Telegram would reject it as too long.
 	text := strings.Repeat("a", 3999) + "<b" + strings.Repeat("x", 500)
 	chunks := splitTelegram(text, 4000)
@@ -302,11 +357,11 @@ func TestSplitTelegramUnclosedTagIsBounded(t *testing.T) {
 		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
 	}
 	for i, c := range chunks {
-		if len([]rune(c)) > 4000+tagSlackRunes {
-			t.Errorf("chunk %d exceeds maxLen+tagSlackRunes: %d runes", i, len([]rune(c)))
+		if utf16Len(c) > 4000+tagSlackUnits {
+			t.Errorf("chunk %d exceeds maxLen+tagSlackUnits: %d UTF-16 units", i, utf16Len(c))
 		}
-		if len([]rune(c)) > telegramMaxMessageLen {
-			t.Errorf("chunk %d exceeds Telegram hard limit: %d runes", i, len([]rune(c)))
+		if utf16Len(c) > telegramMaxMessageLen {
+			t.Errorf("chunk %d exceeds Telegram hard limit: %d UTF-16 units", i, utf16Len(c))
 		}
 	}
 	if strings.Join(chunks, "") != text {

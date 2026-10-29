@@ -18,11 +18,13 @@ type WebSource struct {
 // the config file, never in code.
 type Config struct {
 	Mistral struct {
-		APIKey        string  `yaml:"api_key"`
-		Model         string  `yaml:"model"`
-		BaseURL       string  `yaml:"base_url"`
-		Temperature   float64 `yaml:"temperature"`
-		MaxIterations int     `yaml:"max_iterations"`
+		APIKey  string `yaml:"api_key"`
+		Model   string `yaml:"model"`
+		BaseURL string `yaml:"base_url"`
+		// Temperature is a pointer so an explicit 0 (fully deterministic) is
+		// distinguishable from "unset" (nil → default 0.3).
+		Temperature   *float64 `yaml:"temperature"`
+		MaxIterations int      `yaml:"max_iterations"`
 	} `yaml:"mistral"`
 
 	Brief struct {
@@ -112,8 +114,9 @@ func (c *Config) setDefaults() {
 	if c.Mistral.BaseURL == "" {
 		c.Mistral.BaseURL = defaultMistralBaseURL
 	}
-	if c.Mistral.Temperature == 0 {
-		c.Mistral.Temperature = 0.3
+	if c.Mistral.Temperature == nil {
+		t := 0.3
+		c.Mistral.Temperature = &t
 	}
 	if c.Mistral.MaxIterations == 0 {
 		c.Mistral.MaxIterations = 12
@@ -180,10 +183,26 @@ func (c *Config) setDefaults() {
 	}
 }
 
-// validate checks required fields and cross-field consistency.
+// validate checks required fields, cross-field consistency and numeric
+// ranges. Numeric fields must be positive where a zero/negative value would
+// disable a timeout or crash a slice (see truncateRunes and the email cap) —
+// unset fields are already replaced by defaults in setDefaults, so anything
+// non-positive here was set explicitly.
 func (c *Config) validate() error {
 	if c.Mistral.APIKey == "" {
 		return fmt.Errorf("mistral.api_key is required")
+	}
+	if c.Mistral.Temperature != nil && (*c.Mistral.Temperature < 0 || *c.Mistral.Temperature > 2) {
+		return fmt.Errorf("mistral.temperature must be between 0 and 2, got %v", *c.Mistral.Temperature)
+	}
+	if c.Mistral.MaxIterations < 0 {
+		return fmt.Errorf("mistral.max_iterations must not be negative, got %d", c.Mistral.MaxIterations)
+	}
+	if c.WebFetch.MaxChars <= 0 {
+		return fmt.Errorf("web_fetch.max_chars must be > 0, got %d", c.WebFetch.MaxChars)
+	}
+	if c.WebFetch.TimeoutSeconds <= 0 {
+		return fmt.Errorf("web_fetch.timeout_seconds must be > 0, got %d", c.WebFetch.TimeoutSeconds)
 	}
 	if c.Telegram.Token == "" || c.Telegram.ChatID == "" {
 		return fmt.Errorf("telegram.token and telegram.chat_id are required (the brief is delivered via Telegram)")
@@ -200,6 +219,18 @@ func (c *Config) validate() error {
 		if c.Sources.Email.Username == "" || c.Sources.Email.Password == "" {
 			return fmt.Errorf("sources.email: username and password are required")
 		}
+		if c.Sources.Email.Port <= 0 || c.Sources.Email.Port > 65535 {
+			return fmt.Errorf("sources.email: port must be 1-65535, got %d", c.Sources.Email.Port)
+		}
+		if c.Sources.Email.SinceHours <= 0 {
+			return fmt.Errorf("sources.email: since_hours must be > 0, got %d", c.Sources.Email.SinceHours)
+		}
+		if c.Sources.Email.MaxMessages <= 0 {
+			return fmt.Errorf("sources.email: max_messages must be > 0, got %d", c.Sources.Email.MaxMessages)
+		}
+	}
+	if c.Sources.SMA.Enabled && c.Sources.SMA.TimeoutSeconds <= 0 {
+		return fmt.Errorf("sources.sma: timeout_seconds must be > 0, got %d", c.Sources.SMA.TimeoutSeconds)
 	}
 	if c.Sources.EV.Enabled {
 		if c.Sources.EV.User == "" || c.Sources.EV.Password == "" {
@@ -207,6 +238,9 @@ func (c *Config) validate() error {
 		}
 		if !vwBrandKnown(c.Sources.EV.Brand) {
 			return fmt.Errorf("sources.ev: unknown brand %q (supported: Volkswagen, Audi, Skoda, Seat, Cupra)", c.Sources.EV.Brand)
+		}
+		if c.Sources.EV.TimeoutSeconds <= 0 {
+			return fmt.Errorf("sources.ev: timeout_seconds must be > 0, got %d", c.Sources.EV.TimeoutSeconds)
 		}
 	}
 	if c.Sources.Pets.Enabled {
@@ -225,6 +259,12 @@ func (c *Config) validate() error {
 			c.Sources.Weather.Longitude < -180 || c.Sources.Weather.Longitude > 180 {
 			return fmt.Errorf("sources.weather: latitude/longitude out of range")
 		}
+		if c.Sources.Weather.Days < 1 {
+			return fmt.Errorf("sources.weather: days must be >= 1, got %d", c.Sources.Weather.Days)
+		}
+		if c.Sources.Weather.TimeoutSeconds <= 0 {
+			return fmt.Errorf("sources.weather: timeout_seconds must be > 0, got %d", c.Sources.Weather.TimeoutSeconds)
+		}
 	}
 	if c.Sources.TV.Enabled {
 		ws, err := parseHHMM(c.Sources.TV.WindowStart)
@@ -241,6 +281,9 @@ func (c *Config) validate() error {
 		}
 		if _, err := time.LoadLocation(c.Sources.TV.Timezone); err != nil {
 			return fmt.Errorf("sources.tv: unknown timezone %q", c.Sources.TV.Timezone)
+		}
+		if c.Sources.TV.TimeoutSeconds <= 0 {
+			return fmt.Errorf("sources.tv: timeout_seconds must be > 0, got %d", c.Sources.TV.TimeoutSeconds)
 		}
 	}
 	switch c.Brief.Language {
@@ -259,7 +302,9 @@ func readConfig(filename string) (*Config, error) {
 	}
 
 	var config Config
-	if err := yaml.Unmarshal(file, &config); err != nil {
+	// Strict: an unknown key (e.g. a typo like "since_hour") must fail loudly
+	// instead of being silently ignored in favor of the default.
+	if err := yaml.UnmarshalStrict(file, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML config: %v", err)
 	}
 

@@ -19,10 +19,12 @@ config with an `.example` file, logrus logging, a Makefile with
      simple headline list.
    - **`get_new_emails`** — fetches mails from your Posteo mailbox over IMAP
      (TLS) that arrived within the configured `since_hours` window (default
-     24h, matching the daily schedule). The mailbox is opened read-only (no
-     `\Seen` flags are set). The tool is **stateless** — no state file: if
-     more mails arrive than `max_messages`, only the newest are briefed, and
-     a delayed or repeated run may report mails from the window again.
+     24h, matching the daily schedule; IMAP `SINCE` matches by calendar date
+     only, so at the 05:00 run this covers everything since yesterday 00:00).
+     The mailbox is opened read-only (no `\Seen` flags are set). The tool is
+     **stateless** — no state file: if more mails arrive than `max_messages`,
+     only the newest are briefed, and a delayed or repeated run may report
+     mails from the window again.
    - **`get_pv_status`** — reads your in-house SMA PV system via **SMA
      Speedwire (UDP)** — the same library evcc uses
      (`gitlab.com/bboehmke/sunny`), no external exporter: current PV
@@ -56,11 +58,17 @@ config with an `.example` file, logrus logging, a Makefile with
    window; the heute re-watch tip when nothing is in the slot), and a 🔮
    one-line outlook. Multiple news sources covering the same story
    are merged into a single bullet — no duplicate headlines.
-3. The brief is printed to stdout and sent to your Telegram chat (chunked to
-   fit the 4096-character message limit). Messages are sent with Telegram's
-   HTML parse mode, so the brief's <b> section headers render bold; the rest
-   of the formatting relies on emojis, Unicode symbols and spacing. If
-   Telegram rejects the markup, the affected chunk is resent as plain text.
+3. The brief is printed to stdout and sent to your Telegram chat, chunked to
+   fit Telegram's 4096-unit message limit (counted in UTF-16 code units, so
+   emoji count double; chunks prefer newline boundaries and never split an
+   HTML tag). Messages are sent with Telegram's HTML parse mode, so the
+   brief's <b> section headers render bold; the rest of the formatting relies
+   on emojis, Unicode symbols and spacing. If Telegram rejects the markup,
+   the affected chunk is resent as plain text. Rate limits (HTTP 429) and
+   server errors (5xx) are retried with backoff; the Mistral API client
+   retries transient 429/5xx/network errors the same way, so one hiccup does
+   not lose the day's brief. If brief generation itself fails, a short
+   failure notice is sent to the chat before the run exits non-zero.
 
 All URLs, credentials and API keys live in the YAML config — never in code.
 
@@ -297,7 +305,10 @@ The binary runs once per invocation (generate + deliver + exit), which makes
 it a natural fit for a systemd timer:
 
 - `daily-brief.service` — `Type=oneshot`, runs as the dedicated `daily-brief`
-  user, config at `/opt/daily-brief/daily-brief.yaml`.
+  user, config at `/opt/daily-brief/daily-brief.yaml`, hardened
+  (`NoNewPrivileges`, `ProtectSystem=strict`, …). `TimeoutStartSec=20min`
+  bounds the run and stays above the in-code 15-minute deadline so the
+  graceful shutdown fires first.
 - `daily-brief.timer` — runs the service daily at 05:00 (`Persistent=true` to
   catch up after downtime). Change `OnCalendar` to adjust the time.
 
@@ -308,9 +319,10 @@ sudo journalctl -u daily-brief.service -f   # watch the runs
 sudo systemctl start daily-brief.service    # trigger a manual run
 ```
 
-`make install` creates the `daily-brief` system user (idempotent), copies the
-example config to `/opt/daily-brief/daily-brief.yaml` if none exists, and
-chowns the install + config directories to the service user.
+`make install` creates the `daily-brief` system user (idempotent) and copies
+the example config to `/opt/daily-brief/daily-brief.yaml` if none exists.
+The binary and install directory stay root-owned; the config — which carries
+all secrets — is chowned to the service user with mode `600`.
 
 ## Development
 

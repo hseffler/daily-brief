@@ -82,6 +82,12 @@ func fetchWebpage(ctx context.Context, client *http.Client, rawurl string, maxCh
 		return "", fmt.Errorf("fetching %s returned HTTP status %d", rawurl, resp.StatusCode)
 	}
 
+	// A JSON endpoint is not a web page or feed; parsing it as HTML would
+	// return garbage text instead of a useful error.
+	if ct := resp.Header.Get("Content-Type"); strings.Contains(ct, "json") {
+		return "", fmt.Errorf("fetching %s returned %s, not a web page or RSS/Atom feed — point the web source at the site's HTML page or its feed URL", rawurl, ct)
+	}
+
 	// charset.NewReader transcodes non-UTF-8 pages to UTF-8 based on the
 	// Content-Type header (or an HTML meta tag).
 	body := io.LimitReader(resp.Body, webFetchMaxBodyBytes)

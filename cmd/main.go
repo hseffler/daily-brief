@@ -23,6 +23,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"html"
 	"os"
 	"os/signal"
 	"strings"
@@ -81,6 +82,16 @@ func main() {
 
 	brief, err := generateBrief(runCtx, cfg, logger)
 	if err != nil {
+		logger.Errorf("Failed to generate brief: %v", err)
+		// A failed run must not be silent: notify via Telegram (with a fresh
+		// short deadline — runCtx may already be expired) before exiting.
+		sender := NewTelegramSender(cfg.Telegram.Token, cfg.Telegram.ChatID, nil, logger)
+		noticeCtx, cancelNotice := context.WithTimeout(ctx, 60*time.Second)
+		defer cancelNotice()
+		notice := "⚠️ <b>Daily brief failed</b>\n" + html.EscapeString(fmt.Sprintf("brief generation failed: %v", err))
+		if sendErr := sender.Send(noticeCtx, notice); sendErr != nil {
+			logger.Errorf("Failed to send the failure notice via Telegram: %v", sendErr)
+		}
 		logger.Fatalf("Failed to generate brief: %v", err)
 	}
 
@@ -97,7 +108,7 @@ const overallRunTimeout = 15 * time.Minute
 
 // generateBrief wires the tools and the agent and returns the final brief.
 func generateBrief(ctx context.Context, cfg *Config, logger *logrus.Logger) (string, error) {
-	mistral := NewMistralClient(cfg.Mistral.APIKey, cfg.Mistral.BaseURL, nil)
+	mistral := NewMistralClient(cfg.Mistral.APIKey, cfg.Mistral.BaseURL, nil, logger)
 
 	tools := []Tool{
 		newWebFetchTool(cfg.WebFetch.MaxChars, cfg.WebFetch.TimeoutSeconds, logger),
@@ -190,7 +201,8 @@ func generateBrief(ctx context.Context, cfg *Config, logger *logrus.Logger) (str
 	systemPrompt := buildSystemPrompt(cfg, now)
 	userPrompt := buildUserPrompt(cfg, now)
 
-	agent := NewAgent(mistral, cfg.Mistral.Model, cfg.Mistral.Temperature,
+	// cfg comes from readConfig, which runs setDefaults: Temperature is set.
+	agent := NewAgent(mistral, cfg.Mistral.Model, *cfg.Mistral.Temperature,
 		tools, systemPrompt, userPrompt, cfg.Mistral.MaxIterations, logger)
 
 	brief, err := agent.Run(ctx)

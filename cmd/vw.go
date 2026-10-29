@@ -650,8 +650,10 @@ func (c *vwPortalClient) download(ctx context.Context, vin, identifier, name str
 
 // latestPoints downloads up to maxDatasetBackfill of the newest content
 // datasets and merges their points (newest dataset first, so the first
-// dataset containing a state-of-charge value ends the walk). It returns the
-// merged points and the newest dataset's delivery time.
+// dataset containing a state-of-charge value ends the walk). A dataset that
+// fails to download or parse is skipped (logged) so one bad file does not
+// lose the older, readable ones. It returns the merged points and the newest
+// dataset's delivery time.
 func (c *vwPortalClient) latestPoints(ctx context.Context, vin, identifier string, content []vwDataset) ([]vwPoint, time.Time, error) {
 	var points []vwPoint
 	var newest time.Time
@@ -664,11 +666,13 @@ func (c *vwPortalClient) latestPoints(ctx context.Context, vin, identifier strin
 
 		b, err := c.download(ctx, vin, identifier, d.Name)
 		if err != nil {
-			return nil, time.Time{}, err
+			c.logger.WithError(err).Warnf("skipping unreadable dataset %s", d.Name)
+			continue
 		}
 		pts, err := parseVWDataset(b)
 		if err != nil {
-			return nil, time.Time{}, fmt.Errorf("parsing dataset %s: %w", d.Name, err)
+			c.logger.WithError(err).Warnf("skipping unparsable dataset %s", d.Name)
+			continue
 		}
 		for _, p := range pts {
 			if findVWPoint(points, p.id()) == nil {
@@ -681,6 +685,9 @@ func (c *vwPortalClient) latestPoints(ctx context.Context, vin, identifier strin
 		}
 	}
 
+	if len(points) == 0 {
+		return nil, time.Time{}, fmt.Errorf("none of the %d newest vehicle datasets could be read", min(len(content), maxDatasetBackfill))
+	}
 	return points, newest, nil
 }
 

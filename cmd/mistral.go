@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // defaultMistralBaseURL is the Mistral API endpoint. It is a constant in code
@@ -139,32 +144,109 @@ type mistralAPIRequest struct {
 	Temperature       float64       `json:"temperature"`
 }
 
+// mistralMaxAttempts bounds the retries of one Chat call on transient
+// failures (HTTP 429/5xx and network errors). A daily run must not die on a
+// single transient API error.
+const mistralMaxAttempts = 3
+
 // MistralClient talks to the Mistral chat completions API.
 type MistralClient struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
+	logger     *logrus.Logger
+	// backoffBase is the base delay for retries (attempt n waits
+	// n*backoffBase); 429 responses use the server-advised Retry-After
+	// instead. A field so tests can shrink it.
+	backoffBase time.Duration
 }
 
 // NewMistralClient creates a client. An empty baseURL falls back to the public
 // Mistral API; a nil httpClient gets a default with a generous timeout (LLM
 // calls with tool loops can take a while).
-func NewMistralClient(apiKey, baseURL string, httpClient *http.Client) *MistralClient {
+func NewMistralClient(apiKey, baseURL string, httpClient *http.Client, logger *logrus.Logger) *MistralClient {
 	if baseURL == "" {
 		baseURL = defaultMistralBaseURL
 	}
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 180 * time.Second}
 	}
+	if logger == nil {
+		logger = logrus.New()
+	}
 	return &MistralClient{
-		apiKey:     apiKey,
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		httpClient: httpClient,
+		apiKey:      apiKey,
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		httpClient:  httpClient,
+		logger:      logger,
+		backoffBase: 2 * time.Second,
 	}
 }
 
-// Chat performs one chat-completions call with tool support enabled.
+// mistralAPIError is a non-200 Mistral API response with a short body snippet.
+type mistralAPIError struct {
+	statusCode int
+	body       string
+	retryAfter time.Duration // from the Retry-After header, when present
+}
+
+func (e *mistralAPIError) Error() string {
+	return fmt.Sprintf("Mistral API returned status %d: %s", e.statusCode, strings.TrimSpace(e.body))
+}
+
+// retryable reports whether the status is worth retrying (rate limit or
+// server-side error). Client errors (400/401/403/...) are permanent.
+func (e *mistralAPIError) retryable() bool {
+	switch e.statusCode {
+	case http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// Chat performs one chat-completions call with tool support enabled, retrying
+// transient failures (HTTP 429/5xx, network errors) up to mistralMaxAttempts
+// times with backoff.
 func (c *MistralClient) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= mistralMaxAttempts; attempt++ {
+		resp, err := c.chatOnce(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+
+		var apiErr *mistralAPIError
+		var netErr *url.Error
+		retryable := errors.As(err, &netErr) || (errors.As(err, &apiErr) && apiErr.retryable())
+		if !retryable {
+			return nil, err
+		}
+
+		delay := time.Duration(attempt) * c.backoffBase
+		if errors.As(err, &apiErr) && apiErr.retryAfter > 0 {
+			delay = apiErr.retryAfter
+		}
+		c.logger.WithFields(logrus.Fields{
+			"attempt": attempt,
+			"delay":   delay,
+			"err":     err,
+		}).Warn("Mistral API request failed transiently, retrying")
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return nil, lastErr
+}
+
+// chatOnce performs a single chat-completions call.
+func (c *MistralClient) chatOnce(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	apiReq := mistralAPIRequest{
 		Model:             req.Model,
 		Messages:          req.Messages,
@@ -196,7 +278,13 @@ func (c *MistralClient) Chat(ctx context.Context, req ChatRequest) (*ChatRespons
 
 	if resp.StatusCode != http.StatusOK {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("Mistral API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		apiErr := &mistralAPIError{statusCode: resp.StatusCode, body: string(snippet)}
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+				apiErr.retryAfter = time.Duration(secs) * time.Second
+			}
+		}
+		return nil, apiErr
 	}
 
 	var chatResp ChatResponse

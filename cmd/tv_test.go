@@ -537,3 +537,33 @@ func TestTVMatchLateNewsExcludesUpdate(t *testing.T) {
 		}
 	}
 }
+
+func TestTVLateNewsDedupesIdenticalEditions(t *testing.T) {
+	// The same edition (same show, same start) appearing twice in a channel's
+	// response (e.g. via nested timeSlots) must be reported only once.
+	ard := `{"channels":[{"id":"daserste","timeSlots":[
+		[{"broadcastedOn":"2026-10-17T22:15:00+02:00","coreTitle":"tagesthemen"}],
+		[{"broadcastedOn":"2026-10-17T22:15:00+02:00","title":"tagesthemen","subline":"repeat entry"}]
+	]}]}`
+	client := newTestTVClient(t,
+		func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(ard)) },
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"http://zdf.de/rels/cmdm/broadcasts":[]}`))
+		},
+	)
+
+	day := time.Date(2026, 10, 17, 0, 0, 0, 0, client.location)
+	editions, missing, sourceErrs := client.lateNewsEditions(context.Background(), day)
+	if len(sourceErrs) != 0 {
+		t.Fatalf("unexpected source errors: %v", sourceErrs)
+	}
+	if len(editions) != 1 {
+		t.Fatalf("expected 1 deduplicated edition, got %d: %+v", len(editions), editions)
+	}
+	if editions[0].Show != "tagesthemen" {
+		t.Errorf("show: got %q", editions[0].Show)
+	}
+	if len(missing) != 1 || missing[0] != "heute journal (ZDF)" {
+		t.Errorf("missing: got %v, want [heute journal (ZDF)]", missing)
+	}
+}

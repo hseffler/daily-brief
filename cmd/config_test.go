@@ -272,6 +272,156 @@ func TestReadConfigMissingFile(t *testing.T) {
 	}
 }
 
+func TestReadConfigRejectsNonPositiveNumerics(t *testing.T) {
+	// Negative/zero numeric values must fail validation instead of panicking
+	// later (slice bounds) or silently disabling timeouts.
+	cases := []struct {
+		name    string
+		content string
+		wantErr string
+	}{
+		{
+			name: "negative max_chars",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+web_fetch: {max_chars: -5}
+sources:
+  web: [{name: "Z", url: "https://www.zeit.de/"}]
+`,
+			wantErr: "max_chars",
+		},
+		{
+			name: "zero web_fetch timeout",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+web_fetch: {timeout_seconds: -1}
+sources:
+  web: [{name: "Z", url: "https://www.zeit.de/"}]
+`,
+			wantErr: "timeout_seconds",
+		},
+		{
+			name: "negative since_hours",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  email: {enabled: true, username: "u", password: "p", since_hours: -24}
+`,
+			wantErr: "since_hours",
+		},
+		{
+			name: "negative max_messages",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  email: {enabled: true, username: "u", password: "p", max_messages: -3}
+`,
+			wantErr: "max_messages",
+		},
+		{
+			name: "bad imap port",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  email: {enabled: true, username: "u", password: "p", port: 99999}
+`,
+			wantErr: "port",
+		},
+		{
+			name: "negative weather days",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  weather: {enabled: true, latitude: 52.5, longitude: 13.4, days: -7}
+`,
+			wantErr: "days",
+		},
+		{
+			name: "negative tv timeout",
+			content: `
+mistral: {api_key: "k"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  tv: {enabled: true, timeout_seconds: -15}
+`,
+			wantErr: "timeout_seconds",
+		},
+		{
+			name: "temperature out of range",
+			content: `
+mistral: {api_key: "k", temperature: 5}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  web: [{name: "Z", url: "https://www.zeit.de/"}]
+`,
+			wantErr: "temperature",
+		},
+		{
+			name: "negative max_iterations",
+			content: `
+mistral: {api_key: "k", max_iterations: -1}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  web: [{name: "Z", url: "https://www.zeit.de/"}]
+`,
+			wantErr: "max_iterations",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := readConfig(writeTempConfig(t, tc.content))
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error containing %q, got %q", tc.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+func TestReadConfigStrictRejectsUnknownKeys(t *testing.T) {
+	// A typo'd key must fail loudly instead of being silently ignored.
+	path := writeTempConfig(t, `
+mistral: {api_key: "k", api_keyy_typo: "x"}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  web: [{name: "Z", url: "https://www.zeit.de/"}]
+`)
+	_, err := readConfig(path)
+	if err == nil {
+		t.Fatal("expected error for unknown config key")
+	}
+	if !strings.Contains(err.Error(), "api_keyy_typo") {
+		t.Errorf("error should name the unknown key, got %q", err.Error())
+	}
+}
+
+func TestReadConfigExplicitZeroTemperature(t *testing.T) {
+	// temperature: 0 is a valid explicit choice (deterministic), distinct
+	// from an unset temperature (default 0.3).
+	path := writeTempConfig(t, `
+mistral: {api_key: "k", temperature: 0}
+telegram: {token: "t", chat_id: "c"}
+sources:
+  web: [{name: "Z", url: "https://www.zeit.de/"}]
+`)
+	cfg, err := readConfig(path)
+	if err != nil {
+		t.Fatalf("temperature: 0 should validate: %v", err)
+	}
+	if cfg.Mistral.Temperature == nil || *cfg.Mistral.Temperature != 0 {
+		t.Errorf("temperature: got %v, want explicit 0", cfg.Mistral.Temperature)
+	}
+}
+
 func TestReadConfigTVOnlySource(t *testing.T) {
 	// sources.tv needs no credentials — it can be the only source.
 	path := writeTempConfig(t, `

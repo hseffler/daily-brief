@@ -77,6 +77,10 @@ func (f *imapFetcher) dialIMAP(ctx context.Context, addr string) (*imapclient.Cl
 // newest last, capped at max messages. The mailbox is opened read-only so no
 // \Seen flags are set.
 //
+// Note: IMAP SEARCH SINCE compares calendar dates only — the time part is
+// ignored (RFC 3501) — so a 24h window at the 05:00 run effectively covers
+// everything since yesterday 00:00 (up to ~29h), not a true rolling 24h.
+//
 // go-imap v1's protocol calls (Login/Select/Search/Fetch) are blocking and
 // cannot be cancelled, so FetchNew runs the work in a goroutine and abandons
 // it when ctx is done: on timeout the goroutine (and its connection) is left
@@ -319,8 +323,10 @@ func newEmailTool(cfg *Config, fetcher EmailFetcher, logger *logrus.Logger) Tool
 			}
 
 			// Keep the newest max_messages (emails arrive date-ascending).
-			if len(emails) > cfg.Sources.Email.MaxMessages {
-				emails = emails[len(emails)-cfg.Sources.Email.MaxMessages:]
+			// validate() guarantees max_messages > 0; the guard keeps a
+			// hand-built Config from panicking on a negative slice bound.
+			if max := cfg.Sources.Email.MaxMessages; max > 0 && len(emails) > max {
+				emails = emails[len(emails)-max:]
 			}
 
 			if len(emails) == 0 {

@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestMistralChatSendsToolsAndParsesToolCalls(t *testing.T) {
@@ -39,7 +42,7 @@ func TestMistralChatSendsToolsAndParsesToolCalls(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewMistralClient("test-key", srv.URL, srv.Client())
+	client := NewMistralClient("test-key", srv.URL, srv.Client(), testLogger())
 	resp, err := client.Chat(context.Background(), ChatRequest{
 		Model:       "mistral-large-latest",
 		Messages:    []ChatMessage{{Role: "user", Content: Content("hi")}},
@@ -98,7 +101,7 @@ func TestMistralChatErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewMistralClient("bad-key", srv.URL, srv.Client())
+	client := NewMistralClient("bad-key", srv.URL, srv.Client(), testLogger())
 	_, err := client.Chat(context.Background(), ChatRequest{Model: "m", Messages: []ChatMessage{{Role: "user", Content: Content("hi")}}})
 	if err == nil {
 		t.Fatal("expected error for 401")
@@ -109,9 +112,107 @@ func TestMistralChatErrorStatus(t *testing.T) {
 }
 
 func TestMistralClientDefaultBaseURL(t *testing.T) {
-	c := NewMistralClient("k", "", nil)
+	c := NewMistralClient("k", "", nil, testLogger())
 	if c.baseURL != defaultMistralBaseURL {
 		t.Errorf("baseURL: got %q, want %q", c.baseURL, defaultMistralBaseURL)
+	}
+}
+
+func TestMistralChatRetriesTransientErrors(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		n := requests
+		mu.Unlock()
+		switch n {
+		case 1:
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"message":"rate limited"}`))
+		case 2:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"message":"unavailable"}`))
+		default:
+			w.Write([]byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		}
+	}))
+	defer srv.Close()
+
+	client := NewMistralClient("k", srv.URL, srv.Client(), testLogger())
+	client.backoffBase = time.Millisecond
+
+	resp, err := client.Chat(context.Background(), ChatRequest{Model: "m", Messages: []ChatMessage{{Role: "user", Content: Content("hi")}}})
+	if err != nil {
+		t.Fatalf("Chat should succeed after transient failures: %v", err)
+	}
+	if got := string(resp.Choices[0].Message.Content); got != "ok" {
+		t.Errorf("content: got %q, want %q", got, "ok")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 3 {
+		t.Errorf("expected 3 requests (429 + 503 + ok), got %d", requests)
+	}
+}
+
+func TestMistralChatDoesNotRetryClientErrors(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"message":"bad request"}`))
+	}))
+	defer srv.Close()
+
+	client := NewMistralClient("k", srv.URL, srv.Client(), testLogger())
+	client.backoffBase = time.Millisecond
+
+	_, err := client.Chat(context.Background(), ChatRequest{Model: "m", Messages: []ChatMessage{{Role: "user", Content: Content("hi")}}})
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+	var apiErr *mistralAPIError
+	if !errors.As(err, &apiErr) || apiErr.statusCode != http.StatusBadRequest {
+		t.Errorf("expected mistralAPIError 400, got %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 1 {
+		t.Errorf("400 must not be retried: expected 1 request, got %d", requests)
+	}
+}
+
+func TestMistralChatGivesUpAfterMaxAttempts(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message":"boom"}`))
+	}))
+	defer srv.Close()
+
+	client := NewMistralClient("k", srv.URL, srv.Client(), testLogger())
+	client.backoffBase = time.Millisecond
+
+	_, err := client.Chat(context.Background(), ChatRequest{Model: "m", Messages: []ChatMessage{{Role: "user", Content: Content("hi")}}})
+	if err == nil {
+		t.Fatal("expected error when all attempts fail")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error should mention status 500: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != mistralMaxAttempts {
+		t.Errorf("expected %d attempts, got %d", mistralMaxAttempts, requests)
 	}
 }
 
@@ -176,7 +277,7 @@ func TestMistralChatParsesArrayContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewMistralClient("test-key", srv.URL, srv.Client())
+	client := NewMistralClient("test-key", srv.URL, srv.Client(), testLogger())
 	resp, err := client.Chat(context.Background(), ChatRequest{
 		Model:    "mistral-large-4",
 		Messages: []ChatMessage{{Role: "user", Content: Content("hi")}},

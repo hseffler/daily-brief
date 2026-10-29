@@ -2,7 +2,7 @@
 
 # Build variables
 BINARY_NAME := daily-brief
-VERSION := 1.2.0
+VERSION := 1.3.0
 BUILD_DIR := build
 EXAMPLE_CONFIG_FILE := daily-brief.yaml.example
 
@@ -32,10 +32,10 @@ clean:
 	@rm -rf $(BUILD_DIR)
 	@echo "Clean complete"
 
-# Run the application once (for testing)
+# Run the application once (for testing) with the real config
 run:
 	@echo "Running $(BINARY_NAME)..."
-	@./$(BUILD_DIR)/$(BINARY_NAME) -config $(EXAMPLE_CONFIG_FILE)
+	@./$(BUILD_DIR)/$(BINARY_NAME) -config daily-brief.yaml
 
 # Test the build
 test:
@@ -57,13 +57,16 @@ install: build
 		useradd --system --no-create-home --shell /usr/sbin/nologin $(BINARY_NAME); \
 	fi
 	@mkdir -p $(CONFIG_DIR)
-	@rm -f /var/log/daily-brief.log /var/log/daily-brief.error.log
 	cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
 	cp $(BINARY_NAME).service $(SYSTEMD_DIR)/$(SERVICE_FILE)
 	cp $(BINARY_NAME).timer $(SYSTEMD_DIR)/$(TIMER_FILE)
 	test -f $(CONFIG_DIR)/daily-brief.yaml || cp $(EXAMPLE_CONFIG_FILE) $(CONFIG_DIR)/daily-brief.yaml
-	chown $(BINARY_NAME):$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME) $(CONFIG_DIR)
-	chmod +x $(INSTALL_DIR)/$(BINARY_NAME)
+	@# The binary and the install directory stay root-owned (the service only
+	@# reads them); the config carries secrets, so it belongs to the service
+	@# user with mode 600 (not world-readable).
+	chmod 755 $(INSTALL_DIR)/$(BINARY_NAME)
+	chown $(BINARY_NAME):$(BINARY_NAME) $(CONFIG_DIR)/daily-brief.yaml
+	chmod 600 $(CONFIG_DIR)/daily-brief.yaml
 	systemctl daemon-reload
 	systemctl enable $(BINARY_NAME).timer
 	systemctl start $(BINARY_NAME).timer

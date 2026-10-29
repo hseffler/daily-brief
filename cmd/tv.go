@@ -466,6 +466,7 @@ func (c *tvClient) inWindow(t time.Time) bool {
 func (c *tvClient) lateNewsEditions(ctx context.Context, day time.Time) (editions []tvEdition, missing []string, sourceErrs map[string]error) {
 	sourceErrs = map[string]error{}
 	found := map[string]bool{}
+	seen := map[string]bool{} // dedupe identical editions (same show + start)
 
 	collect := func(entries []tvEntry, err error, source string) {
 		if err != nil {
@@ -477,6 +478,11 @@ func (c *tvClient) lateNewsEditions(ctx context.Context, day time.Time) (edition
 			if !ok {
 				continue
 			}
+			key := show + "|" + e.Start.Format(time.RFC3339)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			editions = append(editions, tvEdition{
 				Show:     show,
 				Channel:  e.Channel,

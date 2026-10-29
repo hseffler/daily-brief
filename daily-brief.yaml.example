@@ -2,6 +2,8 @@
 #
 # All URLs, credentials and API keys live in this file — never in code.
 # Copy this file to daily-brief.yaml and fill in your values.
+# The parser is strict: an unknown key (typo) is an error, not silently
+# ignored. Keep the file mode 600 — it contains secrets.
 
 # Mistral API (the LLM that drives the tools and writes the brief).
 # Get a key at https://console.mistral.ai/
@@ -9,7 +11,7 @@ mistral:
   api_key: "YOUR_MISTRAL_API_KEY"
   model: "mistral-large-4"               # e.g. mistral-large-4, mistral-medium-latest, mistral-small-latest, ministral-8b-latest
   # base_url: "https://api.mistral.ai/v1"  # only override for proxies/tests
-  temperature: 0.3                     # creativity; 0 means "use default"
+  temperature: 0.3                     # creativity; omit for the default (0.3), 0 = fully deterministic, max 2
   max_iterations: 12                   # max agent loop iterations per run
 
 # The brief itself.
@@ -79,7 +81,9 @@ sources:
     username: "you@posteo.de"          # your full Posteo address
     password: "YOUR_POSTEO_APP_PASSWORD"
     mailbox: "INBOX"
-    since_hours: 24                    # report mails from the last 24h (keep >= the interval between runs)
+    since_hours: 24                    # report mails from the last 24h (keep >= the interval between runs).
+                                       # Note: IMAP SINCE matches by calendar date only, so at the 05:00
+                                       # run this effectively covers everything since yesterday 00:00.
     max_messages: 25                   # cap on mails per run (newest kept)
 
   # In-house SMA PV system (battery state + current production).

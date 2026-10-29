@@ -61,7 +61,8 @@ systemd timer. Project layout follows hostmonitor conventions.
 - **Web** (`fetch_webpage`): HTTP GET with a browser User-Agent, charset
   transcoding (`x/net/html/charset`), HTML→readable text via goquery (drops
   script/style/nav/footer/..., keeps `<article>` headings+teasers, capped at
-  `web_fetch.max_chars`, default 8000). **RSS feeds** (detected by `<item>`
+  `web_fetch.max_chars`, default 8000). A JSON `Content-Type` is rejected with
+  a clear error (not a page/feed). **RSS feeds** (detected by `<item>`
   elements) and **Atom feeds** (detected by `<entry>` elements) are rendered
   as a simple bullet list of headlines (`- Title`). This is how zeit.de
   (bot-protected on the main site), taz and WELT are read — via their RSS
@@ -77,9 +78,11 @@ systemd timer. Project layout follows hostmonitor conventions.
   first, full bodies only for messages ≤ 512 KiB. Snippets come from the
   first `text/plain` MIME part with quoted-printable/base64 decoding
   (stdlib `net/mail` + `mime/multipart`). New-mail detection is
-  **stateless**: IMAP `SEARCH SINCE now - email.since_hours` (default 24h,
-  a rolling window matching the daily 05:00 schedule) — no state file, no
-  dedupe; a delayed or repeated run may re-report mails from the window.
+  **stateless**: IMAP `SEARCH SINCE now - email.since_hours` (default 24h) —
+  note IMAP `SINCE` compares calendar dates only (RFC 3501), so at the 05:00
+  run the window effectively covers everything since yesterday 00:00 (up to
+  ~29h), not a true rolling 24h. No state file, no dedupe; a delayed or
+  repeated run may re-report mails from the window.
   Posteo requires an **app password**. The fetch limit is `max(4 x
   max_messages, 100)` and the brief cap (`max_messages`) keeps the newest
   mails of the window. `FetchNew` runs the blocking go-imap work in a
@@ -115,7 +118,8 @@ systemd timer. Project layout follows hostmonitor conventions.
   web player ships — overridable via `sources.tv.zdf_api_key`). The tool checks
   the coming day (the current day in `sources.tv.timezone`, default
   Europe/Berlin): it collects the **heute journal** (ZDF) and **tagesthemen**
-  (ARD) editions and reports which start within the configured window
+  (ARD) editions (deduplicated by show + start time) and reports which start
+  within the configured window
   (`sources.tv.window_start`/`window_end`, default 21:15–21:30, inclusive).
   Editions starting before 06:00 are ignored — the small hours carry overnight
   repeats of the previous evening (e.g. the ~00:20 heute journal repeat),
@@ -147,7 +151,9 @@ systemd timer. Project layout follows hostmonitor conventions.
   (consent + link vehicle + continuous request). Reading vehicle data means
   listing datasets (`/proxy_api/euda-apim/datadelivery/.../list`), downloading
   the newest content dataset(s) (skipping `*_no_content_found.zip`
-  placeholders) and decoding the flat data-point list (`{key, dataFieldName,
+  placeholders). Unreadable or unparsable datasets among the newest are
+  skipped (logged) so one bad file does not lose the older readable ones.
+  Decoding the flat data-point list (`{key, dataFieldName,
   value, timestampUtc}`). SoC for the ID.3 is the data point with GUID
   `506cb83e-f99f-3af3-bbeb-0429b69a78d9` (`battery_state_report.soc`);
   fallbacks `battery_level_HV.value`, `state_of_charge`, `hv_soc` (same
@@ -173,17 +179,36 @@ systemd timer. Project layout follows hostmonitor conventions.
 - Brief printed to stdout and sent to Telegram (bot API `sendMessage` with
   `parse_mode=HTML`, so the brief's `<b>` section headers render bold and
   `<pre>` blocks render as monospace),
-  split into ≤4000-rune chunks (rune-safe, newline-preferred, never
-  splitting inside an HTML tag), one retry with the server-advised
-  `retry_after` on HTTP 429, and a plain-text fallback (tags stripped, no
-  parse mode) when Telegram answers 400 "can't parse entities".
+  split into ≤4000-UTF-16-unit chunks (Telegram counts the 4096 hard limit in
+  UTF-16 code units, so astral emoji count double; rune-safe so no multi-byte
+  character is split, newline-preferred, never splitting inside an HTML tag,
+  with a bounded tag slack so even an unclosed tag stays under the limit),
+  retries up to 3 attempts per chunk on HTTP 429 (server-advised
+  `retry_after`) and on HTTP 5xx (linear backoff), and a plain-text fallback
+  (tags stripped, no parse mode) when Telegram answers 400 "can't parse
+  entities".
+- The Mistral client likewise retries one `chat/completions` call up to 3
+  times on transient failures (HTTP 429/5xx with backoff honoring
+  `Retry-After`, network errors); permanent 4xx errors are returned at once.
+- If brief generation fails, a short HTML-escaped failure notice is sent to
+  the Telegram chat (fresh 60s deadline) before the run exits non-zero, so a
+  failed daily run is never silent.
 
 ### 4. Configuration & lifecycle
 - YAML config (`daily-brief.yaml`), `-config` flag (default
   `daily-brief.yaml`), `-verbose` for debug logging (logrus, same style as
   hostmonitor).
-- Defaults + validation in `readConfig` (api key, telegram credentials,
-  at least one source, per-source required fields, language `en`/`de`).
+- Defaults + validation in `readConfig`: strict parsing (`yaml.UnmarshalStrict`
+  — an unknown key is an error, not silently ignored), api key, telegram
+  credentials, at least one source, per-source required fields, language
+  `en`/`de`, and positive numeric ranges (`web_fetch.max_chars` /
+  `timeout_seconds`, `email.since_hours` / `max_messages` / `port`, per-source
+  `timeout_seconds`, `weather.days`, `mistral.max_iterations`,
+  `mistral.temperature` 0–2) so a bad value fails at startup instead of
+  panicking on a slice bound or silently disabling a timeout.
+  `mistral.temperature` is a `*float64`: an explicit `0` (deterministic) is
+  distinct from unset (default 0.3). Keep the config file mode 600 — it
+  contains secrets.
 - **Prompts live in the config**: `prompts.system` / `prompts.user` are
   templates with `{date}`, `{language}` and `{sources}` placeholders
   (`renderPrompt` in `main.go`). The `{sources}` block is generated from the
@@ -213,12 +238,18 @@ systemd timer. Project layout follows hostmonitor conventions.
   form.
 - Graceful shutdown via `signal.NotifyContext` (SIGINT/SIGTERM), plus an
   overall 15-minute run deadline (`overallRunTimeout`) and
-  `TimeoutStartSec=10min` in the systemd unit, so a stuck LLM/tool/network
-  call cannot block the timer indefinitely.
+  `TimeoutStartSec=20min` in the systemd unit — deliberately above the
+  in-code deadline so the graceful cancellation fires before systemd's
+  SIGKILL — so a stuck LLM/tool/network call cannot block the timer
+  indefinitely.
 - systemd: `daily-brief.service` (`Type=oneshot`, dedicated `daily-brief`
-  user, config at `/opt/daily-brief/daily-brief.yaml`) + `daily-brief.timer`
-  (daily 05:00, `Persistent=true`). `make install` builds, creates the user
-  (idempotent), installs units + example config, enables the timer.
+  user, config at `/opt/daily-brief/daily-brief.yaml`, hardened with
+  `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, empty
+  `CapabilityBoundingSet`, etc.) + `daily-brief.timer` (daily 05:00,
+  `Persistent=true`). `make install` builds, creates the user (idempotent),
+  installs units + example config, enables the timer. The binary and install
+  directory stay root-owned; the config is chowned to the service user with
+  mode 600.
 
 ## Go Dependencies
 - `github.com/sirupsen/logrus` v1.9.4 — structured logging (direct)
@@ -287,9 +318,10 @@ When making changes to the codebase:
   `sma_test.go`. The sunny library's own tests cover the wire protocol — do
   not add tests that talk to a real inverter.
 - **Makefile install/uninstall require root**: `make install` creates the
-  dedicated `daily-brief` system user if missing (idempotent), chowns
-  `/opt/daily-brief` to it, and enables + starts the timer; `make uninstall`
-  guards its `rm -rf` to `/opt/daily-brief` only.
+  dedicated `daily-brief` system user if missing (idempotent), keeps
+  `/opt/daily-brief` and the binary root-owned, chowns only the config
+  `daily-brief.yaml` to the service user with mode 600, and enables + starts
+  the timer; `make uninstall` guards its `rm -rf` to `/opt/daily-brief` only.
 - **Scheduling time**: change `OnCalendar` in `daily-brief.timer` (currently
   `*-*-* 05:00:00`).
 
@@ -329,10 +361,12 @@ When making changes to the codebase:
    program API serves at most 8 days ahead. Neither API is documented
    officially — both are the same endpoints the broadcasters' own web
    frontends use.
-8. **Email is stateless**: mails are matched by a rolling `since_hours`
-   window, not by dedupe state. A delayed run (systemd catch-up after
-   downtime) or a manual second run repeats mails from the window, and
-   mails from a failed run's window are not re-briefed.
+8. **Email is stateless**: mails are matched by a `since_hours`
+   window, not by dedupe state — and IMAP `SINCE` is calendar-date-granular,
+   so at the 05:00 run the "24h" window really covers since yesterday 00:00
+   (~29h). A delayed run (systemd catch-up after downtime) or a manual second
+   run repeats mails from the window, and mails from a failed run's window
+   are not re-briefed.
 9. **Pets (SureFlap)**: the Sure Petcare cloud API is unofficial and
    reverse-engineered — it may change or break without notice (a `position`
    outage in late 2024 was fixed by Sure Petcare, but there is no stability
@@ -353,7 +387,7 @@ When making changes to the codebase:
 ## Project Status
 
 **Current**: Feature-complete for the requested sources, tests green
-**Version**: 1.2.0
+**Version**: 1.3.0
 
 ---
 

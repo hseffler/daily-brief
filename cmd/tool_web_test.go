@@ -214,3 +214,21 @@ func TestFetchWebpageTruncationIsRuneSafe(t *testing.T) {
 		t.Error("expected truncation marker")
 	}
 }
+
+func TestFetchWebpageRejectsJSON(t *testing.T) {
+	// A JSON endpoint is not a page or feed — the tool must error instead of
+	// returning parsed-as-HTML garbage.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"headlines": ["a", "b"]}`))
+	}))
+	defer srv.Close()
+
+	_, err := fetchWebpage(context.Background(), srv.Client(), srv.URL, 8000, testLogger())
+	if err == nil {
+		t.Fatal("expected error for JSON content type")
+	}
+	if !strings.Contains(err.Error(), "json") {
+		t.Errorf("error should mention the JSON content type: %v", err)
+	}
+}

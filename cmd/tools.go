@@ -26,8 +26,12 @@ func findTool(tools []Tool, name string) *Tool {
 
 // truncateRunes cuts s to at most max runes and reports whether it cut
 // anything. It is rune-based so multi-byte UTF-8 characters are never split
-// (byte slicing could produce invalid UTF-8 at the cut).
+// (byte slicing could produce invalid UTF-8 at the cut). A negative max is
+// clamped to 0 so a misconfiguration cannot panic on runes[:negative].
 func truncateRunes(s string, max int) (string, bool) {
+	if max < 0 {
+		max = 0
+	}
 	runes := []rune(s)
 	if len(runes) <= max {
 		return s, false

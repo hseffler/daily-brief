@@ -10,7 +10,26 @@ Group=daily-brief
 WorkingDirectory=/opt/daily-brief
 ExecStart=/opt/daily-brief/daily-brief -config /opt/daily-brief/daily-brief.yaml
 # Bound the run so a stuck LLM/tool/network call cannot block the timer.
-TimeoutStartSec=10min
+# Must stay ABOVE the in-code 15-minute overall deadline (overallRunTimeout in
+# cmd/main.go) so the graceful context cancellation fires before systemd
+# SIGKILLs the process.
+TimeoutStartSec=20min
+
+# Hardening: the service only reads its config under /opt/daily-brief and
+# talks to the network (HTTPS, IMAP, UDP Speedwire).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
 
 # Logging to journald
 StandardOutput=journal
